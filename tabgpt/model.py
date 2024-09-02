@@ -14,6 +14,8 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from torch.optim.lr_scheduler import OneCycleLR
+
 
 from tabgpt.utils import CfgNode as CN
 
@@ -247,7 +249,19 @@ class tabGPT(nn.Module):
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
-        return optimizer
+
+        # Define the OneCycleLR scheduler
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=train_config.learning_rate,
+            steps_per_epoch=train_config.steps_per_epoch,  # Total number of steps over the entire training
+            pct_start=0.3,  # Optional: Adjust this based on your needs
+            anneal_strategy='linear',  # Optional: 'cos' or 'linear'
+            cycle_momentum=False  # Optional: Use this if using AdamW or similar optimizer
+        )
+
+        # Return both optimizer and scheduler
+        return optimizer, scheduler
 
     def forward(self, x, targets=None):
         for block in self.transformer.h:

@@ -63,9 +63,6 @@ class Trainer:
     def run(self):
         model, config = self.model, self.config
 
-        # setup the optimizer
-        self.optimizer = model.configure_optimizers(config)
-
         # setup the dataloader
         train_loader = DataLoader(
             self.train_dataset,
@@ -74,6 +71,10 @@ class Trainer:
             batch_size=config.batch_size,
             num_workers=config.num_workers,
         )
+
+        # setup the optimizer
+        config.steps_per_epoch = len(train_loader)
+        self.optimizer, self.scheduler = model.configure_optimizers(config)
 
         self.iter_num = 0
         self.iter_time = time.time()
@@ -93,7 +94,6 @@ class Trainer:
                     break
                 batch = [t.to(self.device) for t in batch]
                 x, y = batch
-
                 # forward the model
                 _, self.loss = model(x, y)
 
@@ -102,6 +102,7 @@ class Trainer:
                 self.loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
                 self.optimizer.step()
+                self.scheduler.step()
 
                 self.trigger_callbacks('on_batch_end')
                 self.iter_num += 1

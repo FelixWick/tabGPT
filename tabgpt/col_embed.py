@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 from transformers import GPT2Model, AutoTokenizer
 
 
@@ -11,8 +11,7 @@ else:
     device = torch.device("cpu")
 
 
-def get_column_embeddings(df, target_name, categorical_features, numerical_features,
-                          number_of_cols=10,
+def get_column_embeddings(df, target_name, categorical_features, numerical_features, number_of_cols=10,
                           null_treatment="zero-embedding", fillna_categorical="missing value", fillna_numerical=0):
     features = categorical_features + numerical_features
     number_of_features = len(features) + 1
@@ -87,3 +86,10 @@ def get_column_embeddings(df, target_name, categorical_features, numerical_featu
         features_embeds = torch.cat((features_embeds, padding_features_embeds), dim=1)
 
     return features_embeds
+
+
+def store_row_as_file(store_dir, dataset_name, features_embeds, targets):
+    n_files = features_embeds.shape[0]
+    print(f'storing: {n_files} files')
+    for i in range(n_files):
+        np.save(f"{store_dir}/{dataset_name}_{targets[i]}_{i}", features_embeds[i])
