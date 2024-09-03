@@ -250,18 +250,7 @@ class tabGPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
 
-        # Define the OneCycleLR scheduler
-        scheduler = OneCycleLR(
-            optimizer,
-            max_lr=train_config.learning_rate,
-            steps_per_epoch=train_config.steps_per_epoch,  # Total number of steps over the entire training
-            pct_start=0.3,  # Optional: Adjust this based on your needs
-            anneal_strategy='linear',  # Optional: 'cos' or 'linear'
-            cycle_momentum=False  # Optional: Use this if using AdamW or similar optimizer
-        )
-
-        # Return both optimizer and scheduler
-        return optimizer, scheduler
+        return optimizer
 
     def forward(self, x, targets=None):
         for block in self.transformer.h:
