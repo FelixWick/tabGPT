@@ -1,28 +1,77 @@
 import numpy as np
 import pandas as pd
 from IPython import embed
+import datetime
 import torch
 from tabgpt.col_embed import get_column_embeddings, store_row_as_file
 
 
+def ewma_prediction(df, group_cols, col, alpha, horizon):
+    df.sort_values(["date"], inplace=True)
+    df_grouped = df.groupby(group_cols, group_keys=False)
+    df["past sales"] = df_grouped[col].apply(
+        lambda x: x.shift(horizon).ewm(alpha=alpha, ignore_na=True).mean()
+    )
+    return df
+
+
+def ewma_merge(df_test, df_train, ewma_col, group_cols):
+    def get_latest_ewmas(df):
+        return df.loc[df["date"] == df["date"].max(), ewma_col]
+
+    df_train_latest_ewma = (
+        df_train[["date", ewma_col] + group_cols]
+        .groupby(group_cols)
+        .apply(get_latest_ewmas)
+        .reset_index()
+    )
+
+    df_test = df_test.merge(
+        df_train_latest_ewma[[ewma_col] + group_cols], on=group_cols, how="left"
+    )
+
+    return df_test
+
+
+def seasonality_features(df):
+    df["date"] = pd.to_datetime(df["date"])
+    # df["weekday"] = df['date'].dt.dayofweek
+    df["weekday"] = df["date"].dt.day_name()
+    df["day in month"] = df["date"].dt.day
+    df["day in year"] = df["date"].dt.dayofyear
+    return df
+
+
+def get_events(df):
+    for event_date in ["2015-08-07", "2016-08-12", "2017-08-11"]:
+        for event_days in range(0, 6):
+            df.loc[
+                df["date"]
+                == str(
+                    (pd.to_datetime(event_date) + datetime.timedelta(days=event_days))
+                ).split(" ")[0],
+                "days around Primer Grito de Independencia",
+            ] = event_days
+    return df
+
 
 def preprocess_favorita(path, n_rows=100_000):
-
     col_dict = {
-    "store_nbr": "unique store id",
-    "item_nbr": "unique item number",
-    "unit_sales": "Sales",
-    "onpromotion": "product is in promotion",
-    "family": "product type",
-    "class": "product class",
-    "perishable": "product is perishable",
-    "transferred": "holiday transferred to other day",
-    "day_of_week": "day of the week",
+        "store_nbr": "unique store id",
+        "item_nbr": "unique item number",
+        "unit_sales": "Sales",
+        "onpromotion": "product is in promotion",
+        "family": "product type",
+        "class": "product class",
+        "perishable": "product is perishable",
+        "transferred": "holiday transferred to other day",
+        "day_of_week": "day of the week",
     }
 
-
     df_train = pd.read_csv(
-        f"{path}/train.csv/train.csv", parse_dates=["date"], skiprows=range(1, 124600000)
+        f"{path}/train.csv/train.csv",
+        parse_dates=["date"],
+        skiprows=range(1, 124600000),
     )  # result ~ 800.000 rows
     items = pd.read_csv(f"{path}/items.csv/items.csv")
     df_holiday_events = pd.read_csv(f"{path}/holidays_events.csv/holidays_events.csv")
@@ -38,76 +87,88 @@ def preprocess_favorita(path, n_rows=100_000):
 
     df.drop(["id"], axis=1, inplace=True)
 
-    df = df.assign(onpromotion=lambda df: df.onpromotion.map({False: "no", True: "yes"})).assign(
-        perishable=lambda df: df.perishable.map({0: "no", 1: "yes"})
-    )
+    df = df.assign(
+        onpromotion=lambda df: df.onpromotion.map({False: "no", True: "yes"})
+    ).assign(perishable=lambda df: df.perishable.map({0: "no", 1: "yes"}))
 
     df["Sales"] = np.log1p(df["unit_sales"])
     df.drop(["unit_sales"], axis=1, inplace=True)
 
     df = df.rename(columns=col_dict)
 
-    df = df.iloc[-n_rows:] # last
-    train_rows = int(0.95*n_rows)
+    df = df.iloc[-n_rows:]  # last
+    train_rows = int(0.95 * n_rows)
     df_train = df[:train_rows]
     df_val = df[train_rows:]
 
-    categorical_features = df.columns[df.columns != 'Sales'].tolist()
+    categorical_features = df.columns[df.columns != "Sales"].tolist()
     numerical_features = []
     features = categorical_features + numerical_features
 
     return df_train, df_val, features, categorical_features, numerical_features
 
 
-
 def preprocess_rossmann(path, n_rows=100_000):
-
-
     col_dict = {
-    "Store": "unique store Id",
-    "Customers": "number of customers",
-    "DayOfWeek": "day of the week",
-    "Open": "was the store open",
-    "StateHoliday": "indicates a state holiday",
-    "SchoolHoliday": "affected by school holidays",
-    "StoreType": "type of store",
-    "Assortment": "assortment level",
-    "CompetitionDistance": "distance in meters to the nearest competitor store",
-    "Promo": "product is in promotion",
-    "Promo2": "special promotion",
+        "Store": "unique store Id",
+        "Customers": "number of customers",
+        "DayOfWeek": "day of the week",
+        "Open": "was the store open",
+        "StateHoliday": "indicates a state holiday",
+        "SchoolHoliday": "affected by school holidays",
+        "StoreType": "type of store",
+        "Assortment": "assortment level",
+        "CompetitionDistance": "distance in meters to the nearest competitor store",
+        "Promo": "product is in promotion",
+        "Promo2": "special promotion",
     }
-
 
     stores = pd.read_csv(f"{path}/store.csv")
     df = (
         pd.read_csv(f"{path}/train.csv", parse_dates=True)
         .assign(
-            StateHoliday=lambda df: df.StateHoliday.map({
-                "a": "public holiday",
-                "b": "Easter holiday",
-                "c": "Christmas",
-                "0": "none",
-                0: "none",
-            })
+            StateHoliday=lambda df: df.StateHoliday.map(
+                {
+                    "a": "public holiday",
+                    "b": "Easter holiday",
+                    "c": "Christmas",
+                    "0": "none",
+                    0: "none",
+                }
+            )
         )
         .merge(stores, how="left", on="Store")
         .sort_values(["Store", "Date"])
-        .assign(Assortment=lambda df: df.Assortment.map({"a": "basic", "b": "extra", "c": "extended"}))
+        .assign(
+            Assortment=lambda df: df.Assortment.map(
+                {"a": "basic", "b": "extra", "c": "extended"}
+            )
+        )
         .assign(Open=lambda df: df.Open.map({0: "closed", 1: "open"}))
         .assign(Promo=lambda df: df.Promo.map({0: "no", 1: "yes"}))
         .assign(SchoolHoliday=lambda df: df.SchoolHoliday.map({0: "no", 1: "yes"}))
-        .assign(Promo2=lambda df: df.Promo2.map({0: "not participating", 1: "participating"}))
-        .assign(StoreType=lambda df: df.StoreType.map({"a": "Type A", "b": "Type B", "c": "Type C", "d": "Type D"}))
         .assign(
-            DayOfWeek=lambda df: df.DayOfWeek.map({
-                1: "Monday",
-                2: "Tuesday",
-                3: "Wednesday",
-                4: "Thursday",
-                5: "Friday",
-                6: "Saturday",
-                7: "Sunday",
-            })
+            Promo2=lambda df: df.Promo2.map(
+                {0: "not participating", 1: "participating"}
+            )
+        )
+        .assign(
+            StoreType=lambda df: df.StoreType.map(
+                {"a": "Type A", "b": "Type B", "c": "Type C", "d": "Type D"}
+            )
+        )
+        .assign(
+            DayOfWeek=lambda df: df.DayOfWeek.map(
+                {
+                    1: "Monday",
+                    2: "Tuesday",
+                    3: "Wednesday",
+                    4: "Thursday",
+                    5: "Friday",
+                    6: "Saturday",
+                    7: "Sunday",
+                }
+            )
         )
         .drop([c for c in stores.columns if c.startswith("Competition")], axis=1)
         .drop([c for c in stores.columns if c.startswith("Promo2S")], axis=1)
@@ -127,12 +188,14 @@ def preprocess_rossmann(path, n_rows=100_000):
     df = df.rename(columns=col_dict)
     df = df.iloc[-n_rows:]
 
-    train_rows = int(0.95*n_rows)
+    train_rows = int(0.95 * n_rows)
     df_train = df[:train_rows]
     df_val = df[train_rows:]
 
-    categorical_features = df.columns[(df.columns != 'Sales') & (df.columns != 'number of customers')].tolist()
-    numerical_features = ['number of customers']
+    categorical_features = df.columns[
+        (df.columns != "Sales") & (df.columns != "number of customers")
+    ].tolist()
+    numerical_features = ["number of customers"]
     features = categorical_features + numerical_features
 
     num_max = df_train[numerical_features].abs().max()
@@ -142,18 +205,16 @@ def preprocess_rossmann(path, n_rows=100_000):
     return df_train, df_val, features, categorical_features, numerical_features
 
 
-
-def preprocess_walmart(path,n_rows=100_000):   
-
+def preprocess_walmart(path, n_rows=100_000):
     col_dict = {
-    "Dept": "department number",
-    "Store": "store number",
-    "Fuel_Price": "cost of fuel",
-    "CPI": "consumer price index",
-    "Unemployment": "unemployment rate",
-    "IsHoliday": "special holiday week",
-    "Size": "store size (in square feet)",
-    "Temperature": "average temperature (in Fahrenheit)",
+        "Dept": "department number",
+        "Store": "store number",
+        "Fuel_Price": "cost of fuel",
+        "CPI": "consumer price index",
+        "Unemployment": "unemployment rate",
+        "IsHoliday": "special holiday week",
+        "Size": "store size (in square feet)",
+        "Temperature": "average temperature (in Fahrenheit)",
     }
 
     dataset = pd.read_csv(f"{path}/train.csv/train.csv")
@@ -173,10 +234,18 @@ def preprocess_walmart(path,n_rows=100_000):
     df["week"] = df["Date"].dt.isocalendar().week
 
     df.drop(
-        ["Date", "MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5", "Fuel_Price"], axis=1, inplace=True
+        [
+            "Date",
+            "MarkDown1",
+            "MarkDown2",
+            "MarkDown3",
+            "MarkDown4",
+            "MarkDown5",
+            "Fuel_Price",
+        ],
+        axis=1,
+        inplace=True,
     )
-
-
 
     df = df.assign(IsHoliday=lambda df: df.IsHoliday.map({False: "no", True: "yes"}))
     df = df[df["Weekly_Sales"] > 0]
@@ -185,13 +254,18 @@ def preprocess_walmart(path,n_rows=100_000):
 
     df = df.iloc[-n_rows:]
 
-    train_rows = int(0.95*n_rows)
+    train_rows = int(0.95 * n_rows)
     df_train = df[:train_rows]
     df_val = df[train_rows:]
 
-    
-    numerical_features =["average temperature (in Fahrenheit)", "unemployment rate", "store size (in square feet)"]
-    categorical_features =  df.columns[(df.columns != 'Weekly_Sales') & ~(df.columns.isin(numerical_features))].tolist()
+    numerical_features = [
+        "average temperature (in Fahrenheit)",
+        "unemployment rate",
+        "store size (in square feet)",
+    ]
+    categorical_features = df.columns[
+        (df.columns != "Weekly_Sales") & ~(df.columns.isin(numerical_features))
+    ].tolist()
     features = categorical_features + numerical_features
 
     num_max = df_train[numerical_features].abs().max()
@@ -201,15 +275,179 @@ def preprocess_walmart(path,n_rows=100_000):
     return df_train, df_val, features, categorical_features, numerical_features
 
 
-if __name__ == '__main__':
-    df_train, df_val, features, categorical_features, numerical_features = preprocess_favorita("C:/Users/70Q1985/Downloads/favorita-grocery-sales-forecasting/")
-    features_embeds_favorita = get_column_embeddings(df_train, "Favorita daily sales", categorical_features, numerical_features, number_of_cols=15).to(torch.float16)
-    store_row_as_file(store_dir='C:/Users/70Q1985/tabGPT/projects/demand-forecasting/data',dataset_name='Favorita',features_embeds=features_embeds_favorita,targets=df_train['Sales'].to_numpy())
+def preprocess_store_sales(test=False):
+    df_train_full = pd.read_csv(
+        "C:/Users/70Q1985/Downloads/store-sales-time-series-forecasting/train.csv"
+    )
+    df_train_full = df_train_full[
+        ~np.isin(
+            df_train_full["date"],
+            ["2013-01-01", "2014-01-01", "2015-01-01", "2016-01-01", "2017-01-01"],
+        )
+    ]
+    df_train_full = df_train_full[
+        (df_train_full["date"] < "2016-04-16") | (df_train_full["date"] > "2016-05-01")
+    ]
 
-    df_train, df_val, features, categorical_features, numerical_features = preprocess_rossmann("C:/Users/70Q1985/Downloads/rossmann")
-    features_embeds_rossmann = get_column_embeddings(df_train, "Rossmann daily sales", categorical_features, numerical_features, number_of_cols=15).to(torch.float16)
-    store_row_as_file(store_dir='C:/Users/70Q1985/tabGPT/projects/demand-forecasting/data',dataset_name='Rossmann',features_embeds=features_embeds_rossmann,targets=df_train['Sales'].to_numpy())
+    df_oil = pd.read_csv(
+        "C:/Users/70Q1985/Downloads/store-sales-time-series-forecasting/oil.csv"
+    )
+    df_train_full = df_train_full.merge(df_oil, on="date", how="left")
 
-    df_train, df_val, features, categorical_features, numerical_features = preprocess_walmart("C:/Users/70Q1985/Downloads/walmart-recruiting-store-sales-forecasting")
-    features_embeds_walmart = get_column_embeddings(df_train, "Walmart weekly sales", categorical_features, numerical_features, number_of_cols=15).to(torch.float16)
-    store_row_as_file(store_dir='C:/Users/70Q1985/tabGPT/projects/demand-forecasting/data',dataset_name='Walmart',features_embeds=features_embeds_walmart,targets=df_train['Weekly_Sales'].to_numpy())
+    df_train_full = seasonality_features(df_train_full)
+
+    df_train_full = get_events(df_train_full)
+
+    df_train_full["sales_transformed"] = np.log(1 + df_train_full["sales"])
+
+    # take just a small data set for testing
+    df_train_full = df_train_full[df_train_full["date"] >= "2017-05-01"].reset_index(
+        drop=True
+    )
+    # df_train_full = df_train_full[(df_train_full["store_nbr"].isin([1, 2, 3])) & (df_train_full["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index(drop=True)
+
+    colname_dict = {
+        "store_nbr": "store",
+        "family": "product group",
+        "onpromotion": "items on promotion",
+        "dcoilwtico": "oil price",
+    }
+    df_train_full.rename(columns=colname_dict, inplace=True)
+    categorical_features = [
+        "store",
+        "product group",
+        "weekday",
+    ]
+    numerical_features = [
+        "items on promotion",
+        "oil price",
+        "day in month",
+        "day in year",
+        "days around Primer Grito de Independencia",
+        "past sales",
+    ]
+
+    features = categorical_features + numerical_features
+
+    if test:
+        df_train = df_train_full
+        df_test = pd.read_csv(
+            "C:/Users/70Q1985/Downloads/store-sales-time-series-forecasting/test.csv"
+        )
+        df_test = df_test.merge(df_oil, on="date", how="left")
+        df_test = seasonality_features(df_test)
+        df_test = get_events(df_test)
+        # df_test = df_test[(df_test["store_nbr"].isin([1, 2, 3])) & (df_test["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index()
+        df_test.rename(columns=colname_dict, inplace=True)
+    else:
+        df_train = df_train_full[df_train_full["date"] <= "2017-07-30"].reset_index(
+            drop=True
+        )
+        df_test = df_train_full[df_train_full["date"] >= "2017-07-31"].reset_index(
+            drop=True
+        )
+
+    ewma_groups = ["store", "product group", "weekday"]
+    df_train = ewma_prediction(df_train, ewma_groups, "sales_transformed", 0.15, 1)
+    df_test = ewma_merge(df_test, df_train, "past sales", ewma_groups)
+
+    num_max = df_train[numerical_features].abs().max()
+    df_train[numerical_features] = df_train[numerical_features] / num_max
+    df_test[numerical_features] = df_test[numerical_features] / num_max
+
+    return df_train, df_test, features, categorical_features, numerical_features
+
+
+if __name__ == "__main__":
+
+    # FAVORITA
+    (
+        df_train,
+        df_val,
+        features,
+        categorical_features,
+        numerical_features,
+    ) = preprocess_favorita(
+        "C:/Users/70Q1985/Downloads/favorita-grocery-sales-forecasting/"
+    )
+    features_embeds_favorita = get_column_embeddings(
+        df_train,
+        "Favorita daily sales",
+        categorical_features,
+        numerical_features,
+        number_of_cols=15,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="C:/Users/70Q1985/tabGPT/projects/demand-forecasting/data",
+        dataset_name="Favorita",
+        features_embeds=features_embeds_favorita,
+        targets=df_train["Sales"].to_numpy(),
+    )
+
+    # ROSSMANN
+    (
+        df_train,
+        df_val,
+        features,
+        categorical_features,
+        numerical_features,
+    ) = preprocess_rossmann("C:/Users/70Q1985/Downloads/rossmann")
+    features_embeds_rossmann = get_column_embeddings(
+        df_train,
+        "Rossmann daily sales",
+        categorical_features,
+        numerical_features,
+        number_of_cols=15,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="C:/Users/70Q1985/tabGPT/projects/demand-forecasting/data",
+        dataset_name="Rossmann",
+        features_embeds=features_embeds_rossmann,
+        targets=df_train["Sales"].to_numpy(),
+    )
+
+    # WALMART
+    (
+        df_train,
+        df_val,
+        features,
+        categorical_features,
+        numerical_features,
+    ) = preprocess_walmart(
+        "C:/Users/70Q1985/Downloads/walmart-recruiting-store-sales-forecasting"
+    )
+    features_embeds_walmart = get_column_embeddings(
+        df_train,
+        "Walmart weekly sales",
+        categorical_features,
+        numerical_features,
+        number_of_cols=15,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="C:/Users/70Q1985/tabGPT/projects/demand-forecasting/data",
+        dataset_name="Walmart",
+        features_embeds=features_embeds_walmart,
+        targets=df_train["Weekly_Sales"].to_numpy(),
+    )
+
+    # STORE SALES
+    (
+        df_train,
+        df_test,
+        features,
+        categorical_features,
+        numerical_features,
+    ) = preprocess_store_sales()
+    features_embeds_store_sales = get_column_embeddings(
+        df_test,
+        "daily store sales",
+        categorical_features,
+        numerical_features,
+        number_of_cols=15,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="C:/Users/70Q1985/tabGPT/projects/demand-forecasting/finetuning/data",
+        dataset_name="store-sales",
+        features_embeds=features_embeds_store_sales,
+        targets=df_train["sales_transformed"].to_numpy(),
+    )
