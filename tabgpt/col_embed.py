@@ -1,6 +1,6 @@
 from tabgpt.data_loader import DataFrameLoader
 import torch
-
+import numpy as np
 from transformers import GPT2Model, AutoTokenizer
 import numpy as np
 import logging
