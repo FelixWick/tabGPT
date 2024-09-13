@@ -64,7 +64,8 @@ class Trainer:
         model, config = self.model, self.config
 
         # setup the optimizer
-        self.optimizer = model.configure_optimizers(config)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=config.learning_rate, betas=config.betas)
+
         scheduler = ReduceLROnPlateauBest(self.optimizer, factor=0.5, patience=20)
 
         # setup the dataloader
@@ -96,7 +97,7 @@ class Trainer:
                 x, y = batch
 
                 # forward the model
-                _, self.loss = model(x, y)
+                self.loss = model(inputs_embeds=x, labels=y).loss
 
                 # backprop and update the parameters
                 model.zero_grad(set_to_none=True)
@@ -118,7 +119,7 @@ class Trainer:
                 model.eval()
                 for x, y in DataLoader(self.train_dataset, batch_size=32):
                     with torch.no_grad():
-                        _, self.loss = model(x.to(self.device), y.to(self.device))
+                        self.loss = model(inputs_embeds=x.to(self.device), labels=y.to(self.device)).loss
                     self.aggregated_loss += self.loss
                     self.iter_in_epoch += 1
                 self.aggregated_loss /= self.iter_in_epoch

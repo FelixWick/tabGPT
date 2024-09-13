@@ -12,6 +12,8 @@ from tabgpt.model import tabGPT
 from tabgpt.trainer import Trainer
 from tabgpt.col_embed import get_column_embeddings
 
+from transformers import GPT2ForSequenceClassification
+
 from IPython import embed
 
 
@@ -172,7 +174,9 @@ def main(args):
     model_config.vocab_size = 50257 # openai's model vocabulary
     model_config.block_size = max_length # 1024 is openai's model block_size
     model_config.n_output_nodes = 1
-    model = tabGPT(model_config)
+    # model = tabGPT(model_config)
+    model = GPT2ForSequenceClassification.from_pretrained("gpt2", num_labels=1)
+    model.config.pad_token_id = 0
 
     # create a Trainer object
     train_config = Trainer.get_default_config()
