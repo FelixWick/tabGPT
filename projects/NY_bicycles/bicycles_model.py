@@ -181,7 +181,7 @@ def main(args):
     # create a Trainer object
     train_config = Trainer.get_default_config()
     train_config.max_iters = 100000
-    train_config.epochs = 200 # used in individual comparison for cross-training of concept paper
+    train_config.epochs = 195 # used in individual comparison for cross-training of concept paper
     train_config.num_workers = 0
     train_config.batch_size = 64
     train_config.observe_train_loss = True
