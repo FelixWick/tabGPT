@@ -53,7 +53,7 @@ def predict(model, dataloader, df):
     yhat = []
     for input_ids, _ in dataloader:
         with torch.no_grad():
-            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
+            yhat += model(inputs_embeds=input_ids.to(device)).logits.squeeze().cpu().detach().numpy().tolist()
 
     df["yhat"] = yhat
     df["yhat"] = np.clip(df["yhat"], 0, None)
@@ -181,7 +181,7 @@ def main(args):
     # create a Trainer object
     train_config = Trainer.get_default_config()
     train_config.max_iters = 100000
-    train_config.epochs = 82 # used in individual comparison for cross-training of concept paper
+    train_config.epochs = 200 # used in individual comparison for cross-training of concept paper
     train_config.num_workers = 0
     train_config.batch_size = 64
     train_config.observe_train_loss = True
