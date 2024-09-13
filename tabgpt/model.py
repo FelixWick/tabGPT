@@ -108,12 +108,12 @@ class tabGPT(nn.Module):
         return C
 
     def __init__(self, config):
-        super().__init__()
+        nn.Module.__init__(self)
         assert config.vocab_size is not None
         assert config.block_size is not None
         self.block_size = config.block_size
         assert config.n_output_nodes is not None
-
+        self.config = config
         type_given = config.model_type is not None
         params_given = all([config.n_layer is not None, config.n_head is not None, config.n_embd is not None])
         assert type_given ^ params_given # exactly one of these (XOR)
@@ -154,7 +154,7 @@ class tabGPT(nn.Module):
             torch.nn.init.ones_(module.weight)
 
     @classmethod
-    def from_pretrained(cls, model_type, n_output_nodes):
+    def from_pretrained_custom(cls, model_type, n_output_nodes):
         """
         Initialize a pretrained GPT model by copying over the weights
         from a huggingface/transformers checkpoint.
@@ -241,6 +241,7 @@ class tabGPT(nn.Module):
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
+
         return optimizer
 
     def forward(self, x, targets=None):

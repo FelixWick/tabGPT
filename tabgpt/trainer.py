@@ -9,6 +9,12 @@ from collections import defaultdict
 import torch
 from torch.utils.data.dataloader import DataLoader
 from tabgpt.utils import CfgNode as CN
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import OneCycleLR
+import os
+import re
+
 
 class Trainer:
 
@@ -30,12 +36,24 @@ class Trainer:
         C.observe_train_loss = False
         return C
 
-    def __init__(self, config, model, train_dataset):
+    def __init__(self, config, model, train_dataset, log_dir='./logs', use_scheduler=True):
         self.config = config
         self.model = model
         self.optimizer = None
         self.train_dataset = train_dataset
         self.callbacks = defaultdict(list)
+        self.use_scheduler = use_scheduler
+        # Initialize the SummaryWriter
+
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        if not os.listdir(log_dir):
+            logdir = os.path.join(log_dir,'version_0')
+        else:
+            folders = os.listdir(log_dir)
+            max_version = max([int(re.search(r'\d+', folder).group()) for folder in folders])
+            logdir = os.path.join(log_dir, f'version_{max_version+1}')
+        self.writer = SummaryWriter(log_dir=logdir)
 
         # determine the device we'll train on
         if config.device == 'auto':
@@ -60,13 +78,22 @@ class Trainer:
         for callback in self.callbacks.get(onevent, []):
             callback(self)
 
+    def scheduler(self, optimizer, total_steps):
+          return OneCycleLR(
+            optimizer,
+            max_lr=self.config.learning_rate,
+            total_steps=total_steps,
+            pct_start=0.3,  # Optional: Adjust this based on your needs
+            anneal_strategy="cos",  # Optional: 'cos' or 'linear'
+            cycle_momentum=True,  # Optional: Use this if using AdamW or similar optimizer
+        )
+
     def run(self):
         model, config = self.model, self.config
 
         # setup the optimizer
         self.optimizer = model.configure_optimizers(config)
-        scheduler = ReduceLROnPlateauBest(self.optimizer, factor=0.5, patience=20)
-
+        #scheduler = ReduceLROnPlateauBest(self.optimizer, factor=0.5, patience=20)
         # setup the dataloader
         train_loader = DataLoader(
             self.train_dataset,
@@ -76,55 +103,70 @@ class Trainer:
             num_workers=config.num_workers,
         )
 
+        if self.use_scheduler:
+            scheduler = self.scheduler(self.optimizer, total_steps=len(train_loader) * self.config.epochs)
+
         self.iter_num = 0
+        self.epochs_run = 0
         self.iter_time = time.time()
         for epoch in range(config.epochs):
-            data_iter = iter(train_loader)
             self.aggregated_loss = 0
             self.iter_in_epoch = 0
+            self.epochs_run += 1
+            self.epoch_loss = 0
             model.train()
 
-            while True:
-                # fetch the next batch (x, y) and re-init iterator if needed
-                try:
-                    batch = next(data_iter)
-                    # if batch[1].size(dim=0) < config.batch_size:
-                    #     break
-                except StopIteration:
-                    break
+            progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f'Epoch {epoch + 1}', position=0, leave=True)
+
+            for batch_idx, batch in progress_bar:
                 batch = [t.to(self.device) for t in batch]
                 x, y = batch
 
                 # forward the model
-                _, self.loss = model(x, y)
+                _, self.loss = model(x=x, targets=y,return_dict=False)
+        
+                self.writer.add_scalar('Loss/step_loss', self.loss.item(), self.iter_num)
+
 
                 # backprop and update the parameters
                 model.zero_grad(set_to_none=True)
                 self.loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
                 self.optimizer.step()
+                if self.use_scheduler:
+                    scheduler.step()
+                    current_lr = scheduler.get_last_lr()[0]
+                    self.writer.add_scalar('Learning Rate', current_lr, self.iter_num)
 
                 self.trigger_callbacks('on_batch_end')
                 self.iter_num += 1
+                self.iter_in_epoch += 1
                 tnow = time.time()
                 self.iter_dt = tnow - self.iter_time
                 self.iter_time = tnow
 
+                # Accumulate loss
+                self.epoch_loss += self.loss.item()
+        
+                # Calculate average loss for the epoch so far
+                avg_loss = self.epoch_loss / (batch_idx + 1)
+
+
+                if self.iter_in_epoch == len(train_loader):
+                    self.trigger_callbacks('on_epoch_end')
+                    self.writer.add_scalar('Loss/avg_loss', avg_loss ,self.epochs_run)
+                    self.writer.add_scalar('Loss/epoch_loss', self.aggregated_loss, self.epochs_run)
+
+
+
+                progress_bar.set_postfix({'iter_dt': f'{self.iter_dt * 1000:.2f}ms',
+                                         'loss': f'{self.loss.item():.5f}',
+                                         'Epoch_loss': self.aggregated_loss})
+                
                 # termination conditions
                 if config.max_iters is not None and self.iter_num >= config.max_iters:
                     break
-
-            if config.observe_train_loss:
-                model.eval()
-                for x, y in DataLoader(self.train_dataset, batch_size=32):
-                    with torch.no_grad():
-                        _, self.loss = model(x.to(self.device), y.to(self.device))
-                    self.aggregated_loss += self.loss
-                    self.iter_in_epoch += 1
-                self.aggregated_loss /= self.iter_in_epoch
-                self.epoch = epoch + 1
-                self.trigger_callbacks('on_epoch_end')
-                # scheduler.step(self.aggregated_loss)
+                # scheduler.step(self.aggregated_loss
 
 
 class ReduceLROnPlateauBest(torch.optim.lr_scheduler.ReduceLROnPlateau):

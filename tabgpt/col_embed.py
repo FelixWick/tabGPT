@@ -5,6 +5,7 @@ from transformers import GPT2Model, AutoTokenizer
 import numpy as np
 import logging
 import os
+import glob
 
 logging.basicConfig(level=logging.INFO)
 
@@ -116,9 +117,12 @@ class Embedder():
                 logging.info("Creating directory")
                 os.makedirs(path)
             if os.listdir(path):
-                raise DirectoryNotEmptyError(path)
+                files = glob.glob(os.path.join(path, '*'))
+                logging.info('Folder not empty, removing old files')
+                for f in files:
+                    os.remove(f)
             for i in range(features_embeds.shape[0]):
-                file_name = f"{self.df_loader.name}_{df[self.df_loader.target_column].iloc[i]}_{i}"
+                file_name = f"{self.df_loader.name};{df[self.df_loader.target_column].iloc[i]};{i}"
                 np.save(os.path.join(path,file_name), features_embeds[i])
         else:
             return features_embeds

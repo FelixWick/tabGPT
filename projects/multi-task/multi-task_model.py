@@ -84,16 +84,13 @@ def main(pretrained):
         torch.tensor(targets_train, dtype=torch.float32)
         )
 
-    # tabGPT model
-    if pretrained:
-        model = tabGPT.from_pretrained('gpt2', 1)
-    else:
-        model_config = tabGPT.get_default_config()
-        model_config.model_type = 'gpt-micro'
-        model_config.vocab_size = 50257 # openai's model vocabulary
-        model_config.block_size = max_features + 1 # 1024 is openai's model block_size
-        model_config.n_output_nodes = 1
-        model = tabGPT(model_config)
+ 
+    model_config = tabGPT.get_default_config()
+    model_config.model_type = 'gpt-micro'
+    model_config.vocab_size = 50257 # openai's model vocabulary
+    model_config.block_size = max_features + 1 # 1024 is openai's model block_size
+    model_config.n_output_nodes = 1
+    model = tabGPT(model_config)
 
     # create a Trainer object
     train_config = Trainer.get_default_config()

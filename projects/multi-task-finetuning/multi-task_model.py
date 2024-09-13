@@ -8,21 +8,24 @@ import itertools
 import lightning as L
 import os
 
-from preprocess import (
-    get_data_bicycles_count,
-    get_data_house_prices,
-    get_data_simulated_demand,
-    get_data_store_sales,
-)
 
-from tabgpt.pl_model import TabGPT
+from peft import LoraConfig, TaskType, get_peft_model
+
+
+from tabgpt.callbacks import whole_epoch_train_loss
+from tabgpt.data.house_prices.data_setup import HousePricesData
+from tabgpt.data.ny_bicycles.data_setup import NYBicyclesData
+from tabgpt.data.simulated_demand.data_setup import SimulatedDemandData
+from tabgpt.data.store_sales.data_setup import StoreSalesData
+from tabgpt.model_hf import tabGPT_HF, tabGPTConfig
 from tabgpt.tabular_dataset import TabularDataset, load_datasets
+from tabgpt.utils import evaluation, predict
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-from tabgpt.model import tabGPT
+
 from tabgpt.trainer import Trainer
-from tabgpt.col_embed import get_column_embeddings
+from tabgpt.col_embed import Embedder
 
 from IPython import embed
 
@@ -55,65 +58,98 @@ def plot_timeseries(df, suffix, include_preds=False):
     plt.savefig("ts_{}.png".format(suffix))
     plt.clf()
 
+def get_all_linear(model):
+    # Create a list to store the layer names
+    layer_names = []
+    # Recursively visit all modules and submodules
+    for name, module in model.named_modules():
+        # Check if the module is an instance of the specified layers
+        if isinstance(module, (torch.nn.Linear)):
+            # model name parsing 
+            layer_names.append(name)
+            #layer_names.append('.'.join(name.split('.')[4:]).split('.')[0])
+    
+    return layer_names
 
-def evaluation(y, yhat):
-    print("RMSLE: ", root_mean_squared_log_error(y, yhat))
-    print("mean(y): ", np.mean(y))
+
+def make_lora_model(model):
+
+    #all_linear = get_all_linear(model)
+    # lm_head = all_linear[-1]
+    peft_config = LoraConfig(
+            task_type=TaskType.SEQ_CLS,
+            target_modules='all_linear',
+            inference_mode=False,
+            r=16,
+            lora_alpha=32,
+            lora_dropout=0.1,  # Dropout rate
+        )
+
+    return get_peft_model(model, peft_config)
 
 
-def predict(model, dataloader, df, min_gpt=True):
-    model.eval()
+def construct_files(data_list):
 
-    yhat = []
-    for input_embeds, _ in dataloader:
-        with torch.no_grad():
-            if min_gpt:
-                yhat += model.generate(input_embeds.to(device)).cpu().numpy().tolist()
-            else:
-                yhat += (
-                    model.model(
-                        inputs_embeds=input_embeds.to(torch.bfloat16).to(device)
-                    )["logits"]
-                    .cpu()
-                    .float()
-                    .numpy()
-                    .tolist()
-                )
+    for d in data_list:
+        if d.name == 'house_prices':
+            d.setup(all_features=False)
+        else:
+            d.setup()
+        if d.name == 'simulated_demand':
+            d.df_val = d.df_test
+    
+    max_features = max([d.n_features for d in data_list])
 
-    df["yhat"] = yhat if min_gpt else list(itertools.chain.from_iterable(yhat))
-    df["yhat"] = np.clip(df["yhat"], 0, None)
-    df["yhat"] = np.exp(df["yhat"]) - 1
-    return df
+    for d in data_list:
+        Embedder(d, mode='train').embed(n_cols=max_features, save=True)
+        Embedder(d, mode='val').embed(n_cols=max_features, save=True)
 
 
 def main(finetune_on):
     np.random.seed(666)
     torch.manual_seed(42)
 
-    datasets = ["store-sales", "house-prices", "demand-forecasting", "ny-bicycles"]
+    data_loader = [StoreSalesData(), HousePricesData(), NYBicyclesData(), SimulatedDemandData()]
+    
+    files_generated = False
+
+    if not files_generated:
+        construct_files(data_list=data_loader)
+
+    else:
+        for d in data_loader:
+            if d.name == 'house_prices':
+                d.setup(all_features=False)
+            else:
+                d.setup()
+            if d.name == 'simulated_demand':
+                d.df_val = d.df_test
+
+    target_column = 'target'
+
+    msg = [f'train samples {d.name}: {len(d.df_train)}' for d in data_loader]
+    for msg in msg:
+        print(msg)
+
+    max_features = max([data.n_features for data in data_loader])
+    print('Max features:', max_features)
+
+    max_pretrain_lr = 5e-4
+    max_finetune_lr = 1e-4
+
+    n_layer, n_head = 4, 4 # gpt-micro
+    config = tabGPTConfig(n_layer=n_layer, n_head=n_head, block_size=max_features+1, n_output_nodes=1)
 
     # Parse the topics
-    dataset_names = [dataset for dataset in datasets if dataset != args.finetune_on]
-
-    # Define the root directory of your dataset
-    root_dir = "data"
+    data_loader_to_pretrain = [d for d in data_loader if d.name != args.finetune_on]
 
     # Load the specified datasets
-    datasets = load_datasets(root_dir, dataset_names)
+    datasets = load_datasets(dataset_loader=data_loader_to_pretrain, mode='train')
 
     # Combine the datasets
     combined_dataset = datasets[0]
     for dataset in datasets[1:]:
         combined_dataset += dataset
-
-    # create Dataloader
-    train_loader = DataLoader(
-        combined_dataset,
-        shuffle=True,
-        pin_memory=True,
-        batch_size=64,
-        num_workers=0,
-    )
 
     path = f"./saved_model_for_finetuning_on_{args.finetune_on}"
     local_model_path = None if not os.path.isdir(path) else path
@@ -125,179 +161,90 @@ def main(finetune_on):
 
     # create Lightning model
     # from scratch if path is None, else PEFT Lora model
-    model = TabGPT(
-        lr=2e-5,
-        local_model_path=local_model_path,
-    ).to(device)
+    config = tabGPTConfig(n_layer=4, n_head=4, block_size=max_features+1, n_output_nodes=1)
+    model = tabGPT_HF(config)
 
     # Pretrain only if not done already
     if local_model_path is None:
-        # Initialize a trainer
-        trainer = L.Trainer(
-            max_epochs=12,
-            precision="bf16-true",
-            gradient_clip_val=1.0,
-            # accumulate_grad_batches=8,
-            # callbacks=[StochasticWeightAveraging(swa_lrs=1e-2)]
-        )
+        train_config = Trainer.get_default_config()
+        train_config.epochs = 30
+        train_config.num_workers = 0
+        train_config.batch_size = 64
+        train_config.learning_rate = max_pretrain_lr
+        trainer = Trainer(train_config, model, combined_dataset)
 
-        trainer.fit(model, train_loader)
+        trainer.run()
 
         print("Storing trained model")
         os.makedirs(path, exist_ok=True)
-        model.model.save_pretrained(path)
+        model.save_pretrained(path)
 
     else:  # finetune
-        torch_dataset = TabularDataset(f"data/{args.finetune_on}")
-        # create Dataloader
-        finetuning_train_loader = DataLoader(
-            torch_dataset,
-            shuffle=True,
-            pin_memory=True,
-            batch_size=64,
-            num_workers=0,
-        )
+        config = tabGPTConfig(n_layer=4, n_head=4, block_size=max_features+1, n_output_nodes=1)
+        model = tabGPT_HF(config)
+        model = model.from_pretrained(path)
+        lora_model = make_lora_model(model)
+    
+        data_loader_to_finetune = [d for d in data_loader if d.name == args.finetune_on]
 
-        # Initialize a trainer
-        trainer = L.Trainer(
-            max_epochs=50,
-            precision="bf16-true",
-            gradient_clip_val=1.0,
-        )
+        torch_finetune_dataset =  load_datasets(dataset_loader=data_loader_to_finetune, mode='train')[0]
 
-        trainer.fit(model, finetuning_train_loader)
-        model = model.to(device)
+        finetune_config = Trainer.get_default_config()
+        finetune_config.epochs = 1
+        finetune_config.num_workers = 0
+        finetune_config.batch_size = 64
+        finetune_config.learning_rate = max_finetune_lr
+        trainer = Trainer(finetune_config, lora_model, torch_finetune_dataset, use_scheduler=True)
+        trainer.set_callback('on_epoch_end', whole_epoch_train_loss)
+        trainer.run()
 
-        max_features = 10
 
-        if args.finetune_on == "store-sales":
-            (
-                df_train,
-                df_val_store_sales,
-                features,
-                categorical_features,
-                numerical_features,
-            ) = get_data_store_sales()
-
-            features_embeds_val_store_sales = get_column_embeddings(
-                df_val_store_sales,
-                "store sales",
-                categorical_features,
-                numerical_features,
-                number_of_cols=max_features,
-            )
-
-            val_dataset_store_sales = TensorDataset(
-                features_embeds_val_store_sales,
+        val_datasets = {d.name: TensorDataset(
+                Embedder(d, mode='val').embed(n_cols=max_features),
                 torch.tensor(
-                    df_val_store_sales["target"].tolist(), dtype=torch.float32
+                    d.df_val[d.target_column].tolist(), dtype=torch.float32
                 ),
-            )
+            ) for d in data_loader}
+        
+        d_dict = {d.name: d for d in data_loader}
+
+        if args.finetune_on == "store_sales":
 
             df_val_store_sales = predict(
-                model,
-                DataLoader(val_dataset_store_sales, batch_size=32),
-                df_val_store_sales,
-                min_gpt=False,
+                lora_model,
+                DataLoader(val_datasets['store_sales'], batch_size=32),
+                d_dict['store_sales'].df_val,
             )
-            evaluation(df_val_store_sales["target"], df_val_store_sales["yhat"])
+            evaluation(df_val_store_sales[target_column], df_val_store_sales["yhat"])
             plot_timeseries(df_val_store_sales, "store_sales", True)
 
-        if args.finetune_on == "house-prices":
-            (
-                df_train,
-                df_val_house_prices,
-                features,
-                categorical_features,
-                numerical_features,
-            ) = get_data_house_prices()
-
-            features_embeds_val_house_prices = get_column_embeddings(
-                df_val_house_prices,
-                "house prices",
-                categorical_features,
-                numerical_features,
-                number_of_cols=max_features,
-            )
-
-            val_dataset_house_prices = TensorDataset(
-                features_embeds_val_house_prices,
-                torch.tensor(
-                    df_val_house_prices["target"].tolist(), dtype=torch.float32
-                ),
-            )
+        if args.finetune_on == "house_prices":
 
             df_val_house_prices = predict(
-                model,
-                DataLoader(val_dataset_house_prices, batch_size=32),
-                df_val_house_prices,
-                min_gpt=False,
+                lora_model,
+                DataLoader(val_datasets['house_prices'], batch_size=32),
+                d_dict['house_prices'].df_val,
             )
-            evaluation(df_val_house_prices["target"], df_val_house_prices["yhat"])
+            evaluation(df_val_house_prices[target_column], df_val_house_prices["yhat"])
 
-        if args.finetune_on == "demand-forecasting":
-            (
-                df_train,
-                df_val_simulated_demand,
-                features,
-                categorical_features,
-                numerical_features,
-            ) = get_data_simulated_demand()
-
-            features_embeds_val_simulated_demand = get_column_embeddings(
-                df_val_simulated_demand,
-                "retail demand forecasting",
-                categorical_features,
-                numerical_features,
-                number_of_cols=max_features,
-            )
-            val_dataset_simulated_demand = TensorDataset(
-                features_embeds_val_simulated_demand,
-                torch.tensor(
-                    df_val_simulated_demand["target"].tolist(), dtype=torch.float32
-                ),
-            )
-
+        if args.finetune_on == "simulated_demand":
+            
             df_val_simulated_demand = predict(
-                model,
-                DataLoader(val_dataset_simulated_demand, batch_size=32),
-                df_val_simulated_demand,
-                min_gpt=False,
+                lora_model,
+                DataLoader(val_datasets['simulated_demand'], batch_size=32),
+                d_dict['simulated_demand'].df_val,
             )
-            evaluation(df_val_simulated_demand["target"], df_val_simulated_demand["yhat"])
+            evaluation(df_val_simulated_demand[target_column], df_val_simulated_demand["yhat"])
             plot_timeseries(df_val_simulated_demand, "simulated_demand", True)
 
-        if args.finetune_on == "ny-bicycles":
-            (
-                df_train,
-                df_val_bicycles_count,
-                features,
-                categorical_features,
-                numerical_features,
-            ) = get_data_bicycles_count()
-
-            features_embeds_val_bicycles_count = get_column_embeddings(
-                df_val_bicycles_count,
-                "bicycles count",
-                categorical_features,
-                numerical_features,
-                number_of_cols=max_features,
-            )
-
-            val_dataset_bicycles_count = TensorDataset(
-                features_embeds_val_bicycles_count,
-                torch.tensor(
-                    df_val_bicycles_count["target"].tolist(), dtype=torch.float32
-                ),
-            )
+        if args.finetune_on == "ny_bicycles":
 
             df_val_bicycles_count = predict(
-                model,
-                DataLoader(val_dataset_bicycles_count, batch_size=32),
-                df_val_bicycles_count,
-                min_gpt=False,
+                lora_model,
+                DataLoader(val_datasets["ny_bicycles"], batch_size=32),
+                d_dict['ny_bicycles'].df_val,
             )
-            evaluation(df_val_bicycles_count["target"], df_val_bicycles_count["yhat"])
+            evaluation(df_val_bicycles_count[target_column], df_val_bicycles_count["yhat"])
             plot_timeseries(df_val_bicycles_count, "bicycles_count", True)
 
     embed()

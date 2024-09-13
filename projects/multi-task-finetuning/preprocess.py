@@ -7,6 +7,7 @@ import torch
 
 
 
+
 def ewma_prediction(df, group_cols, col, alpha, horizon):
     df.sort_values(["date"], inplace=True)
     df_grouped = df.groupby(group_cols, group_keys=False)
@@ -299,10 +300,24 @@ if __name__ == '__main__':
         number_of_cols=max_features,
     ).to(torch.float16)
     store_row_as_file(
-        store_dir="./data/store-sales",
+        store_dir="./data/train/store-sales",
         dataset_name="store-sales",
         features_embeds=features_embeds,
         targets=df_train["target"].to_numpy(),
+    )
+
+    features_embeds = get_column_embeddings(
+        df_val,
+        "store sales",
+        categorical_features,
+        numerical_features,
+        number_of_cols=max_features,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="./data/val/store-sales",
+        dataset_name="store-sales",
+        features_embeds=features_embeds,
+        targets=df_val["target"].to_numpy(),
     )
 
     # HOUSE PRICES
@@ -321,10 +336,23 @@ if __name__ == '__main__':
         number_of_cols=max_features,
     ).to(torch.float16)
     store_row_as_file(
-        store_dir="./data/house-prices",
+        store_dir="./data/train/house-prices",
         dataset_name="house-prices",
         features_embeds=features_embeds,
         targets=df_train["target"].to_numpy(),
+    )
+    features_embeds = get_column_embeddings(
+        df_val,
+        "house prices",
+        categorical_features,
+        numerical_features,
+        number_of_cols=max_features,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="./data/val/house-prices",
+        dataset_name="house-prices",
+        features_embeds=features_embeds,
+        targets=df_val["target"].to_numpy(),
     )
 
     # SIMULATED DEMAND
@@ -343,10 +371,24 @@ if __name__ == '__main__':
         number_of_cols=max_features,
     ).to(torch.float16)
     store_row_as_file(
-        store_dir="./data/demand-forecasting",
+        store_dir="./data/train/demand-forecasting",
         dataset_name="demand-forecasting",
         features_embeds=features_embeds,
         targets=df_train["target"].to_numpy(),
+    )
+
+    features_embeds = get_column_embeddings(
+        df_val,
+        "retail demand forecasting",
+        categorical_features,
+        numerical_features,
+        number_of_cols=max_features,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="./data/val/demand-forecasting",
+        dataset_name="demand-forecasting",
+        features_embeds=features_embeds,
+        targets=df_val["target"].to_numpy(),
     )
 
     # NY Bicycles COUNT
@@ -365,8 +407,22 @@ if __name__ == '__main__':
         number_of_cols=max_features,
     ).to(torch.float16)
     store_row_as_file(
-        store_dir="./data/ny-bicycles",
+        store_dir="./data/train/ny-bicycles",
         dataset_name="ny-bicycles",
         features_embeds=features_embeds,
         targets=df_train["target"].to_numpy(),
+    )
+
+    features_embeds = get_column_embeddings(
+        df_val,
+        "bicycles count",
+        categorical_features,
+        numerical_features,
+        number_of_cols=max_features,
+    ).to(torch.float16)
+    store_row_as_file(
+        store_dir="./data/val/ny-bicycles",
+        dataset_name="ny-bicycles",
+        features_embeds=features_embeds,
+        targets=df_val["target"].to_numpy(),
     )

@@ -23,18 +23,18 @@ class TabularDataset(Dataset):
         return data, target
 
     def extract_info_from_filename(self, filename):
-        dataset_name, target, _ = filename.split("_")
-        return dataset_name, torch.tensor(float(target), dtype=torch.float16)
+        dataset_name, target, _ = filename.split(";")
+        return dataset_name, torch.tensor(float(target), dtype=torch.float32)
     
 
-def load_datasets(root_dir, dataset_names):
+def load_datasets(dataset_loader, mode):
     datasets = []
-    for dataset_name in dataset_names:
-        ds_dir = os.path.join(root_dir, dataset_name)
+    for d in dataset_loader:
+        ds_dir = os.path.join(d.current_dir, 'files', mode)
         if os.path.exists(ds_dir):
             datasets.append(TabularDataset(ds_dir))
         else:
-            print(f"Warning: Directory for dataset {dataset_name} does not exist.")
+            print(f"Warning: Directory for dataset {d.name} does not exist.")
     return datasets
 
 
