@@ -148,7 +148,7 @@ def main(args):
     features_sim_low = categorical_features_sim_low + numerical_features_sim_low
     features_sim_high = categorical_features_sim_high + numerical_features_sim_high
 
-    features = features_sim_low + features_sim_high
+    max_features = max(len(features_sim_low), len(features_sim_high))
 
     df_train_sim_low[numerical_features_sim_low] = df_train_sim_low[numerical_features_sim_low] / num_max_sim_low
     features_embeds_train_sim_low = get_column_embeddings(
@@ -156,7 +156,7 @@ def main(args):
         "low sales",
         categorical_features_sim_low,
         numerical_features_sim_low,
-        number_of_cols=len(features),
+        number_of_cols=max_features,
     )
     df_train_sim_high[numerical_features_sim_high] = df_train_sim_high[numerical_features_sim_high] / num_max_sim_high
     features_embeds_train_sim_high = get_column_embeddings(
@@ -164,7 +164,7 @@ def main(args):
         "high sales",
         categorical_features_sim_high,
         numerical_features_sim_high,
-        number_of_cols=len(features),
+        number_of_cols=max_features,
     )
 
     if args and args[0] == "--mode":
@@ -181,8 +181,6 @@ def main(args):
             dim=0,
         )
 
-        max_length = len(features) + 2
-
         targets_train = (
             df_train_sim_low["sales_transformed"].tolist() + df_train_sim_high["sales_transformed"].tolist()
         )
@@ -193,16 +191,10 @@ def main(args):
 
     elif mode == "train_low":
         features_embeds_train = features_embeds_train_sim_low
-
-        max_length = len(features) + 1
-
         targets_train = df_train_sim_low["sales_transformed"].tolist()
 
     elif mode == "train_high":
         features_embeds_train = features_embeds_train_sim_high
-
-        max_length = len(features) + 1
-
         targets_train = df_train_sim_high["sales_transformed"].tolist()
 
     else:
@@ -216,7 +208,7 @@ def main(args):
     model_config = tabGPT.get_default_config()
     model_config.model_type = "gpt-micro"
     model_config.vocab_size = 50257  # openai's model vocabulary
-    model_config.block_size = max_length  # 1024 is openai's model block_size
+    model_config.block_size = max_features + 1  # 1024 is openai's model block_size
     model_config.n_output_nodes = 1
     model = tabGPT(model_config)
 
@@ -259,7 +251,7 @@ def main(args):
         "low sales",
         categorical_features_sim_low,
         numerical_features_sim_low,
-        number_of_cols=len(features),
+        number_of_cols=max_features,
     )
     df_test_sim_high[numerical_features_sim_high] = df_test_sim_high[numerical_features_sim_high] / num_max_sim_high
     features_embeds_test_sim_high = get_column_embeddings(
@@ -267,7 +259,7 @@ def main(args):
         "high sales",
         categorical_features_sim_high,
         numerical_features_sim_high,
-        number_of_cols=len(features),
+        number_of_cols=max_features,
     )
 
     test_dataset_sim_low = TensorDataset(

@@ -351,7 +351,6 @@ def main(pretrained):
     print("train samples simulated demand: ", len(df_train_simulated_demand))
 
     max_features = max(len(features_store_sales), len(features_house_prices), len(features_bicycles_count), len(features_simulated_demand))
-    features = features_store_sales + features_house_prices + features_bicycles_count + features_simulated_demand
 
     features_embeds_train_store_sales = get_column_embeddings(df_train_store_sales, "store sales", categorical_features_store_sales, numerical_features_store_sales, number_of_cols=max_features)
     features_embeds_train_house_prices = get_column_embeddings(df_train_house_prices, "house prices", categorical_features_house_prices, numerical_features_house_prices, number_of_cols=max_features)
@@ -359,8 +358,6 @@ def main(pretrained):
     features_embeds_train_simulated_demand = get_column_embeddings(df_train_simulated_demand, "retail demand forecasting", categorical_features_simulated_demand, numerical_features_simulated_demand, number_of_cols=max_features)
 
     features_embeds_train = torch.cat((features_embeds_train_store_sales, features_embeds_train_house_prices, features_embeds_train_bicycles_count, features_embeds_train_simulated_demand), dim=0)
-
-    max_length = len(features) + 4
 
     targets_train = df_train_store_sales["target"].tolist() + df_train_house_prices["target"].tolist() + df_train_bicycles_count["target"].tolist() + df_train_simulated_demand["target"].tolist()
 
@@ -376,7 +373,7 @@ def main(pretrained):
         model_config = tabGPT.get_default_config()
         model_config.model_type = 'gpt-micro'
         model_config.vocab_size = 50257 # openai's model vocabulary
-        model_config.block_size = max_length # 1024 is openai's model block_size
+        model_config.block_size = max_features + 1 # 1024 is openai's model block_size
         model_config.n_output_nodes = 1
         model = tabGPT(model_config)
 
