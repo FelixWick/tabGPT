@@ -7,8 +7,18 @@ from ast import literal_eval
 
 import numpy as np
 import torch
+from sklearn.metrics import root_mean_squared_log_error
+
 
 # -----------------------------------------------------------------------------
+
+if torch.cuda.is_available():       
+    device = torch.device("cuda:0")
+    print("Using GPU.")
+else:
+    print("No GPU available, using the CPU instead.")
+    device = torch.device("cpu")
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -100,4 +110,23 @@ class CfgNode:
 
             # overwrite the attribute
             print("command line overwriting config attribute %s with %s" % (key, val))
-            setattr(obj, leaf_key, val)
+            setattr(obj, leaf_key, val)    
+
+
+def evaluation(y, yhat):
+    print('RMSLE: ', root_mean_squared_log_error(y, yhat))
+    print('mean(y): ', np.mean(y))
+
+
+def predict(model, dataloader, df):
+    model.eval()
+
+    yhat = []
+    for input_ids, _ in dataloader:
+        with torch.no_grad():
+            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
+
+    df["yhat"] = yhat
+    df["yhat"] = np.clip(df["yhat"], 0, None)
+    df["yhat"] = np.exp(df["yhat"]) - 1
+    return df

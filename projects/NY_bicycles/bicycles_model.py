@@ -5,12 +5,14 @@ import numpy as np
 from sklearn.metrics import root_mean_squared_log_error
 import matplotlib.pyplot as plt
 
+from tabgpt.data.ny_bicycles.data_setup import NYBicyclesData
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
 from tabgpt.model import tabGPT
 from tabgpt.trainer import Trainer
-from tabgpt.col_embed import get_column_embeddings
+from tabgpt.col_embed import Embedder
+from tabgpt.utils import evaluation, predict
 
 from IPython import embed
 
@@ -40,137 +42,44 @@ def plot_timeseries(df, suffix, include_preds=False):
     plt.clf()
 
 
-def evaluation(y, yhat):
-    print('RMSLE: ', root_mean_squared_log_error(y, yhat))
-    print('mean(y): ', np.mean(y))
-
-
-def predict(model, dataloader, df):
-    model.eval()
-
-    yhat = []
-    for input_ids, _ in dataloader:
-        with torch.no_grad():
-            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
-
-    df["yhat"] = yhat
-    df["yhat"] = np.clip(df["yhat"], 0, None)
-    df["yhat"] = np.exp(df["yhat"]) - 1
-    return df
-
-
-def data_preparation(df):
-    df = df.rename(columns={"Low Temp (°F)": "Low Temp (F)", "High Temp (°F)": "High Temp (F)"})
-    df = df.melt(
-        id_vars=["Date", "High Temp (F)", "Low Temp (F)", "Precipitation"],
-        value_vars=["Brooklyn Bridge", "Manhattan Bridge", "Williamsburg Bridge", "Queensboro Bridge"],
-        var_name="bridge",
-        value_name="bicycles count"
-    )
-
-    # df['weekday'] = pd.to_datetime(df['Date']).dt.dayofweek
-    df['weekday'] = pd.to_datetime(df['Date']).dt.day_name()
-
-    df["bicycles_count_transformed"] = np.log(1 + df["bicycles count"])
-
-    return df
-
-
-def get_data():
-    df_train1 = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/04 April 2017 Cyclist Numbers for Web.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 35,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-    df_train2 = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/05 May 2017 Cyclist Numbers for Web.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 36,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-    df_train3 = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/06 June 2017 Cyclist Numbers for Web.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 35,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-    df_train4 = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/07 July 2017 Cyclist Numbers for Web.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 36,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-    df_train5 = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/08 August 2017 Cyclist Numbers for Web.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 36,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-    df_train6 = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/09 September 2017 Cyclist Numbers for Web.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 35,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-    df_train = pd.concat([df_train1, df_train2, df_train3, df_train4, df_train5, df_train6])
-
-    df_test = pd.read_excel(
-        "2017 Monthly Bike Count Totals for East River Bridges/10 October 2017 Cyclist Numbers.xlsx",
-        usecols="B,D,E,F,G,H,I,J",
-        skiprows=lambda x: x in range(5) or x > 36,
-        converters={"Precipitation": lambda x: 0.0 if x == "T" else x}
-    )
-
-    df_train = data_preparation(df_train)
-    df_test = data_preparation(df_test)
-
-    return df_train, df_test
-
-
 def main(args):
     np.random.seed(666)
     torch.manual_seed(42)
 
     # use data from https://data.cityofnewyork.us/Transportation/Bicycle-Counts-for-East-River-Bridges-Historical-/gua4-p9wg/about_data
-    df_train, df_val = get_data()
+    nybicycles = NYBicyclesData()
+    nybicycles.setup()
+    n_cols = nybicycles.n_features
 
-    categorical_features = [
-        "weekday",
-        "bridge",
-    ]
-    numerical_features = [
-        "Precipitation",
-        "High Temp (F)",
-        "Low Temp (F)",
-    ]
+    embedder = Embedder(nybicycles)
 
-    features = categorical_features + numerical_features
+    embedder.train()
+    features_embeds_train = embedder.embed(n_cols)
 
-    num_max = df_train[numerical_features].abs().max()
-    df_train[numerical_features] = df_train[numerical_features] / num_max
-    df_val[numerical_features] = df_val[numerical_features] / num_max
+    embedder.val()
+    features_embeds_val = embedder.embed(n_cols)
 
-    features_embeds_train = get_column_embeddings(df_train, "bicycles count", categorical_features, numerical_features, number_of_cols=len(features))
-    features_embeds_val = get_column_embeddings(df_val, "bicycles count", categorical_features, numerical_features, number_of_cols=len(features))
+    df_train = nybicycles.df_train
+    df_val = nybicycles.df_val
 
-    max_length = len(features) + 1
+    target_col = nybicycles.target_column
+
 
     train_dataset = TensorDataset(
         features_embeds_train, 
-        torch.tensor(df_train["bicycles_count_transformed"].tolist(), dtype=torch.float32)
+        torch.tensor(df_train[target_col].tolist(), dtype=torch.float32)
         )
 
     val_dataset = TensorDataset(
         features_embeds_val, 
-        torch.tensor(df_val["bicycles_count_transformed"].tolist(), dtype=torch.float32)
+        torch.tensor(df_val[target_col].tolist(), dtype=torch.float32)
         )
 
     # tabGPT model
     model_config = tabGPT.get_default_config()
     model_config.model_type = 'gpt-micro'
     model_config.vocab_size = 50257 # openai's model vocabulary
-    model_config.block_size = max_length # 1024 is openai's model block_size
+    model_config.block_size = n_cols+1 # 1024 is openai's model block_size
     model_config.n_output_nodes = 1
     model = tabGPT(model_config)
 

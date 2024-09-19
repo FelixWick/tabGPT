@@ -7,11 +7,13 @@ from sklearn.model_selection import train_test_split
 
 import torch
 from torch.utils.data import TensorDataset, DataLoader
+from tabgpt.data.house_prices.data_setup import HousePricesData
 
 from tabgpt.model import tabGPT
+from tabgpt.col_embed import Embedder
 from tabgpt.trainer import Trainer
-from tabgpt.col_embed import get_column_embeddings
-from projects.house_prices.construct_dataset import construct_text
+
+from tabgpt.utils import predict, evaluation
 
 from IPython import embed
 
@@ -24,87 +26,25 @@ else:
     device = torch.device("cpu")
 
 
-def evaluation(y, yhat):
-    print('RMSLE: ', root_mean_squared_log_error(y, yhat))
-    print('mean(y): ', np.mean(y))
-
-
-def predict(model, dataloader, df):
-    model.eval()
-
-    yhat = []
-    for input_ids, _ in dataloader:
-        with torch.no_grad():
-            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
-
-    df["yhat"] = yhat
-    df["yhat"] = np.clip(df["yhat"], 0, None)
-    df["yhat"] = np.exp(df["yhat"]) - 1
-    return df
-
-
-def main(test, pretrained, enrich):
+def main(test, pretrained):
     np.random.seed(666)
     torch.manual_seed(42)
 
     # use data from Kaggle competition https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques
-    df_train_full = pd.read_csv("train.csv")
+    house_prices = HousePricesData()
+    house_prices.setup()
+    df_train = house_prices.df_train
 
-    # used in individual comparison for cross-training of concept paper
-    # important_cols = ["OverallQual",
-    #                   "GarageCars",
-    #                   "ExterQual",
-    #                   "Neighborhood",
-    #                   "GrLivArea",
-    #                   "GarageArea",
-    #                   "BsmtQual",
-    #                   "YearBuilt",
-    #                   "KitchenQual",
-    #                   "TotalBsmtSF",
-    #                   ]
-    # important_cols.append('Id')
-    # important_cols.append('SalePrice')
-    # df_train_full = df_train_full[important_cols]
-
-    if enrich:
-        df_train_full = construct_text(df_train_full)
-
-    categorical_features = []
-    numerical_features = []
-    for col in df_train_full.drop(columns=["Id", "SalePrice"]).columns:
-        if df_train_full[col].dtype == 'O':
-            categorical_features.append(col)
-        else:
-            numerical_features.append(col)
-
-    features = categorical_features + numerical_features
-
-    df_train_full["SalePrice_transformed"] = np.log(1 + df_train_full["SalePrice"])
-
-    df_train_full = df_train_full[['Id', 'SalePrice', 'SalePrice_transformed'] + features]
-
-    if test:
-        df_test = pd.read_csv("test.csv")
-        # df_test = df_test[important_cols[:-1]]
-        if enrich:
-            df_test = construct_text(df_test)       
-        df_test = df_test[['Id'] + features]
-        df_train = df_train_full
-    else:
-        df_train, df_test = train_test_split(df_train_full, test_size=0.2, random_state=666)
-
-    num_max = df_train[numerical_features].abs().max()
-    df_train[numerical_features] = df_train[numerical_features] / num_max
-    df_test[numerical_features] = df_test[numerical_features] / num_max
-
-    features_embeds_train = get_column_embeddings(df_train, "house prices", categorical_features, numerical_features, number_of_cols=len(features))
+    embedder = Embedder(house_prices)
+    embedder.train()
+    features_embeds_train = embedder.embed(n_cols=house_prices.n_features)
 
     train_dataset = TensorDataset(
         features_embeds_train,
-        torch.tensor(df_train["SalePrice_transformed"].tolist(), dtype=torch.float32)
+        torch.tensor(house_prices.df_train[house_prices.target_column].tolist(), dtype=torch.float32)
         )
 
-    max_length = len(features) + 1
+    max_length = house_prices.n_features + 1
 
     # tabGPT model
     if pretrained:
@@ -143,18 +83,24 @@ def main(test, pretrained, enrich):
     df_train = predict(model, DataLoader(train_dataset, batch_size=32), df_train)
     evaluation(df_train["SalePrice"], df_train["yhat"])
 
-    features_embeds_val = get_column_embeddings(df_test, "house prices", categorical_features, numerical_features, number_of_cols=len(features))
 
     if test:
+        house_prices.test_setup(all_train_data=False)
+        embedder.test()
+        features_embeds_test = embedder.embed(n_cols=house_prices.n_features)
         test_dataset = TensorDataset(
-            features_embeds_val,
-            torch.tensor(df_test["Id"].tolist(), dtype=torch.float32)
+            features_embeds_test,
+            torch.tensor(house_prices.df_test[house_prices.target_column].tolist(), dtype=torch.float32)
         )
     else:
+        embedder.val()
+        features_embeds_val = embedder.embed(n_cols=house_prices.n_features)
         test_dataset = TensorDataset(
             features_embeds_val,
-            torch.tensor(df_test["SalePrice_transformed"].tolist(), dtype=torch.float32)
+            torch.tensor(house_prices.df_val[house_prices.target_column].tolist(), dtype=torch.float32)
         )
+
+    df_test = house_prices.df_test if test else house_prices.df_val
 
     df_test = predict(model, DataLoader(test_dataset, batch_size=32), df_test)
     if test:
@@ -169,6 +115,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--pretrained", action="store_true")
-    parser.add_argument("--enrich", action="store_true")
     args = parser.parse_args()
-    main(args.test, args.pretrained, args.enrich)
+    main(args.test, args.pretrained)
