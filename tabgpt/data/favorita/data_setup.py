@@ -32,7 +32,7 @@ class FavoritaData(DataFrameLoader):
         df_holiday_events["date"] = pd.to_datetime(df_holiday_events["date"])
         df = df_train.merge(items, how="left", on="item_nbr")
         df = df.merge(df_holiday_events, how="left", on="date")
-        df["month"] = df["date"].dt.month_name(locale="English")
+        df["month"] = df["date"].dt.month_name()
         df["year"] = df["date"].dt.year
         df["day_of_week"] = df["date"].dt.day_name()
         df.drop(["date"], axis=1, inplace=True)
@@ -52,11 +52,11 @@ class FavoritaData(DataFrameLoader):
         df_train = df[:train_rows]
         df_val = df[train_rows:]
 
-        df_train["target"] = np.log1p(df_train["unit_sales"])
-        df_val['target'] = df_val['unit_sales']
+        df_train["target"] = np.log1p(df_train["Sales"])
+        df_val['target'] = df_val['Sales']
 
-        df_train.drop(["unit_sales"], axis=1, inplace=True)
-        df_val.drop(["unit_sales"], axis=1, inplace=True)
+        df_train.drop(["Sales"], axis=1, inplace=True)
+        df_val.drop(["Sales"], axis=1, inplace=True)
 
 
         categorical_features = df_train.columns[df_train.columns != "target"].tolist()

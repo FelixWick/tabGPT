@@ -14,6 +14,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import OneCycleLR
 import os
 import re
+import logging
+
 
 
 class Trainer:
@@ -36,13 +38,14 @@ class Trainer:
         C.observe_train_loss = False
         return C
 
-    def __init__(self, config, model, train_dataset, log_dir='./logs', use_scheduler=True):
+    def __init__(self, config, model, train_dataset, log_dir='./logs', use_scheduler=True, progress_bar=True):
         self.config = config
         self.model = model
         self.optimizer = None
         self.train_dataset = train_dataset
         self.callbacks = defaultdict(list)
         self.use_scheduler = use_scheduler
+        self.disable_progress_bar = not progress_bar
         # Initialize the SummaryWriter
 
         if not os.path.exists(log_dir):
@@ -57,7 +60,7 @@ class Trainer:
 
         # determine the device we'll train on
         if config.device == 'auto':
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         else:
             self.device = config.device
         self.model = self.model.to(self.device)
@@ -106,6 +109,8 @@ class Trainer:
         if self.use_scheduler:
             scheduler = self.scheduler(self.optimizer, total_steps=len(train_loader) * self.config.epochs)
 
+        scaler = torch.amp.GradScaler()
+
         self.iter_num = 0
         self.epochs_run = 0
         self.iter_time = time.time()
@@ -116,27 +121,35 @@ class Trainer:
             self.epoch_loss = 0
             model.train()
 
-            progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f'Epoch {epoch + 1}', position=0, leave=True)
+            logging.info(f'Processed: {self.epochs_run}')
+
+            progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f'Epoch {epoch + 1}', position=0, leave=False, disable=self.disable_progress_bar)
 
             for batch_idx, batch in progress_bar:
                 batch = [t.to(self.device) for t in batch]
                 x, y = batch
+                # backprop and update the parameters
+                model.zero_grad(set_to_none=True)
 
                 # forward the model
-                _, self.loss = model(x=x, targets=y,return_dict=False)
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    _, self.loss = model(x=x, targets=y,return_dict=False)
         
                 self.writer.add_scalar('Loss/step_loss', self.loss.item(), self.iter_num)
 
 
                 # backprop and update the parameters
-                model.zero_grad(set_to_none=True)
-                self.loss.backward()
+                # model.zero_grad(set_to_none=True)
+                scaler.scale(self.loss).backward()# self.loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
-                self.optimizer.step()
+                scaler.step(self.optimizer) # self.optimizer.step()
                 if self.use_scheduler:
                     scheduler.step()
                     current_lr = scheduler.get_last_lr()[0]
                     self.writer.add_scalar('Learning Rate', current_lr, self.iter_num)
+                
+                scaler.update()
+
 
                 self.trigger_callbacks('on_batch_end')
                 self.iter_num += 1

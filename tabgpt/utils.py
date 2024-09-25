@@ -124,7 +124,9 @@ def predict(model, dataloader, df):
     yhat = []
     for input_ids, _ in dataloader:
         with torch.no_grad():
-            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
+            with torch.autocast(device_type='cuda'):
+                preds = model.generate(input_ids.to(device))
+            yhat += preds.cpu().numpy().tolist()
 
     df["yhat"] = yhat
     df["yhat"] = np.clip(df["yhat"], 0, None)

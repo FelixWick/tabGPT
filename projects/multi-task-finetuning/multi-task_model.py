@@ -13,10 +13,13 @@ from peft import LoraConfig, TaskType, get_peft_model
 
 
 from tabgpt.callbacks import whole_epoch_train_loss
+from tabgpt.data.favorita.data_setup import FavoritaData
 from tabgpt.data.house_prices.data_setup import HousePricesData
 from tabgpt.data.ny_bicycles.data_setup import NYBicyclesData
+from tabgpt.data.rossmann.data_setup import RossmannData
 from tabgpt.data.simulated_demand.data_setup import SimulatedDemandData
 from tabgpt.data.store_sales.data_setup import StoreSalesData
+from tabgpt.data.walmart.data_setup import WalmartData
 from tabgpt.model_hf import tabGPT_HF, tabGPTConfig
 from tabgpt.tabular_dataset import TabularDataset, load_datasets
 from tabgpt.utils import evaluation, predict
@@ -35,8 +38,11 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 
 if torch.cuda.is_available():
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:0") # RTX 4090
     print("Using GPU.")
+    print(f"Number of GPUs: {torch.cuda.device_count()}")
+    for i in range(torch.cuda.device_count()):
+        print(f"Device {i}: {torch.cuda.get_device_name(i)}")
 else:
     print("No GPU available, using the CPU instead.")
     device = torch.device("cpu")
@@ -74,11 +80,11 @@ def get_all_linear(model):
 
 def make_lora_model(model):
 
-    #all_linear = get_all_linear(model)
+    all_linear = get_all_linear(model)
     # lm_head = all_linear[-1]
     peft_config = LoraConfig(
             task_type=TaskType.SEQ_CLS,
-            target_modules='all_linear',
+            target_modules=all_linear[:-1],
             inference_mode=False,
             r=16,
             lora_alpha=32,
@@ -93,10 +99,14 @@ def construct_files(data_list):
     for d in data_list:
         if d.name == 'house_prices':
             d.setup(all_features=False)
-        else:
+        elif d.name == 'simulated_demand':
             d.setup()
-        if d.name == 'simulated_demand':
             d.df_val = d.df_test
+        elif d.name == 'store_sales':
+            d.setup()
+        else:
+            d.setup(last_nrows=200_000)
+            
     
     max_features = max([d.n_features for d in data_list])
 
@@ -109,9 +119,10 @@ def main(finetune_on):
     np.random.seed(666)
     torch.manual_seed(42)
 
-    data_loader = [StoreSalesData(), HousePricesData(), NYBicyclesData(), SimulatedDemandData()]
-    
-    files_generated = False
+    #data_loader = [StoreSalesData(), HousePricesData(), NYBicyclesData(), SimulatedDemandData()]
+    data_loader = [WalmartData(), RossmannData(), FavoritaData(), SimulatedDemandData(), StoreSalesData()]
+
+    files_generated = True
 
     if not files_generated:
         construct_files(data_list=data_loader)
@@ -120,10 +131,13 @@ def main(finetune_on):
         for d in data_loader:
             if d.name == 'house_prices':
                 d.setup(all_features=False)
-            else:
+            elif d.name == 'simulated_demand':
                 d.setup()
-            if d.name == 'simulated_demand':
                 d.df_val = d.df_test
+            elif d.name == 'store_sales':
+                d.setup()
+            else:
+                d.setup(last_nrows=200_000)
 
     target_column = 'target'
 
@@ -140,7 +154,7 @@ def main(finetune_on):
     n_layer, n_head = 4, 4 # gpt-micro
     config = tabGPTConfig(n_layer=n_layer, n_head=n_head, block_size=max_features+1, n_output_nodes=1)
 
-    # Parse the topics
+    # Parse the topicsnvisi
     data_loader_to_pretrain = [d for d in data_loader if d.name != args.finetune_on]
 
     # Load the specified datasets
@@ -161,17 +175,16 @@ def main(finetune_on):
 
     # create Lightning model
     # from scratch if path is None, else PEFT Lora model
-    config = tabGPTConfig(n_layer=4, n_head=4, block_size=max_features+1, n_output_nodes=1)
     model = tabGPT_HF(config)
 
     # Pretrain only if not done already
     if local_model_path is None:
         train_config = Trainer.get_default_config()
-        train_config.epochs = 30
-        train_config.num_workers = 0
-        train_config.batch_size = 64
+        train_config.epochs = 10
+        train_config.num_workers = 10
+        train_config.batch_size = 128
         train_config.learning_rate = max_pretrain_lr
-        trainer = Trainer(train_config, model, combined_dataset)
+        trainer = Trainer(train_config, model, combined_dataset, progress_bar=False)
 
         trainer.run()
 
@@ -180,21 +193,21 @@ def main(finetune_on):
         model.save_pretrained(path)
 
     else:  # finetune
-        config = tabGPTConfig(n_layer=4, n_head=4, block_size=max_features+1, n_output_nodes=1)
         model = tabGPT_HF(config)
         model = model.from_pretrained(path)
-        lora_model = make_lora_model(model)
-    
+        model = make_lora_model(model)
+        model.train()
+
         data_loader_to_finetune = [d for d in data_loader if d.name == args.finetune_on]
 
         torch_finetune_dataset =  load_datasets(dataset_loader=data_loader_to_finetune, mode='train')[0]
 
         finetune_config = Trainer.get_default_config()
-        finetune_config.epochs = 1
-        finetune_config.num_workers = 0
-        finetune_config.batch_size = 64
+        finetune_config.epochs = 100
+        finetune_config.num_workers = 10
+        finetune_config.batch_size = 128
         finetune_config.learning_rate = max_finetune_lr
-        trainer = Trainer(finetune_config, lora_model, torch_finetune_dataset, use_scheduler=True)
+        trainer = Trainer(finetune_config, model, torch_finetune_dataset, use_scheduler=True)
         trainer.set_callback('on_epoch_end', whole_epoch_train_loss)
         trainer.run()
 
@@ -204,14 +217,14 @@ def main(finetune_on):
                 torch.tensor(
                     d.df_val[d.target_column].tolist(), dtype=torch.float32
                 ),
-            ) for d in data_loader}
+            ) for d in data_loader_to_finetune}
         
-        d_dict = {d.name: d for d in data_loader}
+        d_dict = {d.name: d for d in data_loader_to_finetune}
 
         if args.finetune_on == "store_sales":
 
             df_val_store_sales = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets['store_sales'], batch_size=32),
                 d_dict['store_sales'].df_val,
             )
@@ -221,7 +234,7 @@ def main(finetune_on):
         if args.finetune_on == "house_prices":
 
             df_val_house_prices = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets['house_prices'], batch_size=32),
                 d_dict['house_prices'].df_val,
             )
@@ -230,7 +243,7 @@ def main(finetune_on):
         if args.finetune_on == "simulated_demand":
             
             df_val_simulated_demand = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets['simulated_demand'], batch_size=32),
                 d_dict['simulated_demand'].df_val,
             )
@@ -240,7 +253,7 @@ def main(finetune_on):
         if args.finetune_on == "ny_bicycles":
 
             df_val_bicycles_count = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets["ny_bicycles"], batch_size=32),
                 d_dict['ny_bicycles'].df_val,
             )

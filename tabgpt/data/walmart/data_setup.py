@@ -33,7 +33,7 @@ class WalmartData(DataFrameLoader):
 
         df["Date"] = pd.to_datetime(df["Date"])
 
-        df["month"] = df["Date"].dt.month_name(locale="English")
+        df["month"] = df["Date"].dt.month_name()
         df["year"] = df["Date"].dt.year
         df["week"] = df["Date"].dt.isocalendar().week
 
@@ -70,6 +70,7 @@ class WalmartData(DataFrameLoader):
 
         numerical_features = [
             "average temperature (in Fahrenheit)",
+            "consumer price index",
             "unemployment rate",
             "store size (in square feet)",
         ]

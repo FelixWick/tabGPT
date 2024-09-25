@@ -81,7 +81,7 @@ class RossmannData(DataFrameLoader):
 
         df["Date"] = pd.to_datetime(df["Date"])
 
-        df["month"] = df["Date"].dt.month_name(locale="English")
+        df["month"] = df["Date"].dt.month_name()
         df["year"] = df["Date"].dt.year
         df.drop(["Date"], axis=1, inplace=True)
 
