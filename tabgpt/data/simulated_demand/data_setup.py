@@ -36,8 +36,6 @@ class SimulatedDemandData(DataFrameLoader):
         df_train = self.data_preparation(df_train)
         df_test = self.data_preparation(df_test)
 
-        df_train["target"] = np.log(1 + df_train["SALES"])
-        df_test["target"] = df_test["SALES"]
 
         # ewma_groups = ["location id", "product id", "weekday"]
         # df_train = ewma_prediction(df_train, ewma_groups, "target", 0.15, 1)
@@ -56,23 +54,22 @@ class SimulatedDemandData(DataFrameLoader):
             "sales price",
             "day in month",
             "day in year",
+            "SALES",
             # "past sales",
         ]
 
-
-        num_max = df_train[numerical_features].abs().max()
-        df_train[numerical_features] = df_train[numerical_features] / num_max
-        df_test[numerical_features] = df_test[numerical_features] / num_max
+        self.setup_scaler(numerical_features)
+        df_train = self.scale_columns(df_train, mode='train')
+        df_test = self.scale_columns(df_test)
 
 
         self.df_train = df_train
         self.df_test = df_test
         self.numerical_features = numerical_features
         self.categorical_features = categorical_features
-        self.n_features = len(numerical_features + categorical_features)
-        self.target_column = "target"
-        logging.info(f'Training set stored with {len(self.df_train)} rows')
-        logging.info(f'{self.n_features} features used for prediction')
+        self.n_features = len(numerical_features + categorical_features) -1
+        self.set_target_column(main_target='SALES', additional_ones=True)
+        
 
     def data_preparation(self, df):
         df.rename(

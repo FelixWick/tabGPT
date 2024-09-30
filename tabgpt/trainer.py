@@ -8,13 +8,18 @@ from collections import defaultdict
 
 import torch
 from torch.utils.data.dataloader import DataLoader
+from sklearn.metrics import root_mean_squared_log_error
 from tabgpt.utils import CfgNode as CN
+import logging
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import OneCycleLR
 import os
 import re
 
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 class Trainer:
 
@@ -36,13 +41,16 @@ class Trainer:
         C.observe_train_loss = False
         return C
 
-    def __init__(self, config, model, train_dataset, log_dir='./logs', use_scheduler=True):
+    def __init__(self, config, model, train_dataset, log_dir='./logs', use_scheduler=True, target_scaler=None, progress_bar=True):
         self.config = config
         self.model = model
         self.optimizer = None
         self.train_dataset = train_dataset
         self.callbacks = defaultdict(list)
         self.use_scheduler = use_scheduler
+        self.target_scaler = target_scaler
+        self.disable_progress_bar = not progress_bar
+
         # Initialize the SummaryWriter
 
         if not os.path.exists(log_dir):
@@ -106,6 +114,8 @@ class Trainer:
         if self.use_scheduler:
             scheduler = self.scheduler(self.optimizer, total_steps=len(train_loader) * self.config.epochs)
 
+        scaler = torch.amp.GradScaler()
+
         self.iter_num = 0
         self.epochs_run = 0
         self.iter_time = time.time()
@@ -114,29 +124,37 @@ class Trainer:
             self.iter_in_epoch = 0
             self.epochs_run += 1
             self.epoch_loss = 0
+            self.epoch_rmsle = 0
             model.train()
 
-            progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f'Epoch {epoch + 1}', position=0, leave=True)
+            logging.info(f'Processed: {self.epochs_run}')
+
+            progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f'Epoch {epoch + 1}', position=0, leave=True, disable=self.disable_progress_bar)
 
             for batch_idx, batch in progress_bar:
                 batch = [t.to(self.device) for t in batch]
                 x, y = batch
 
-                # forward the model
-                _, self.loss = model(x=x, targets=y,return_dict=False)
-        
-                self.writer.add_scalar('Loss/step_loss', self.loss.item(), self.iter_num)
-
-
-                # backprop and update the parameters
                 model.zero_grad(set_to_none=True)
-                self.loss.backward()
+
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    preds, self.loss = model(x=x, targets=y,return_dict=False)
+        
+                # add loss to TB
+                self.writer.add_scalar('Loss/step_loss', self.loss.item(), self.iter_num)
+                # compute scaled gradients
+                scaler.scale(self.loss).backward()# self.loss.backward()
+                # clip gradients
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
-                self.optimizer.step()
+                # update params
+                scaler.step(self.optimizer)
+
                 if self.use_scheduler:
                     scheduler.step()
                     current_lr = scheduler.get_last_lr()[0]
                     self.writer.add_scalar('Learning Rate', current_lr, self.iter_num)
+
+                scaler.update()
 
                 self.trigger_callbacks('on_batch_end')
                 self.iter_num += 1
@@ -151,16 +169,25 @@ class Trainer:
                 # Calculate average loss for the epoch so far
                 avg_loss = self.epoch_loss / (batch_idx + 1)
 
+                if self.target_scaler is not None:
+                    orig_targ= self.target_scaler.inverse_transform(y.reshape(-1,1).cpu().numpy())
+                    orig_pred = self.target_scaler.inverse_transform(preds.reshape(-1,1).detach().cpu().numpy())
+                    self.epoch_rmsle += root_mean_squared_log_error(orig_targ, orig_pred)
+                    avg_rmsle = self.epoch_rmsle / (batch_idx + 1)
+
 
                 if self.iter_in_epoch == len(train_loader):
                     self.trigger_callbacks('on_epoch_end')
                     self.writer.add_scalar('Loss/avg_loss', avg_loss ,self.epochs_run)
+                    if self.target_scaler is not None:
+                        self.writer.add_scalar('Loss/avg_rmsle', avg_rmsle ,self.epochs_run)
                     self.writer.add_scalar('Loss/epoch_loss', self.aggregated_loss, self.epochs_run)
 
 
 
                 progress_bar.set_postfix({'iter_dt': f'{self.iter_dt * 1000:.2f}ms',
-                                         'loss': f'{self.loss.item():.5f}',
+                                         'loss': f'{self.loss.item():.3f}',
+                                         'rmsle': f'{avg_rmsle:.3f}' if self.target_scaler is not None else 0,
                                          'Epoch_loss': self.aggregated_loss})
                 
                 # termination conditions

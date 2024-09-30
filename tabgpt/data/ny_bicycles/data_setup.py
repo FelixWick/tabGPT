@@ -3,11 +3,12 @@ import pandas as pd
 import numpy as np
 import os
 
+
 class NYBicyclesData(DataFrameLoader):
-    def __init__(self, task_description='bicycles count'):
+    def __init__(self, task_description='bicycles crossing bridges'):
         super().__init__(task_description)
 
-    def data_preparation(self, df, train=True):
+    def data_preparation(self, df):
         df = df.rename(
             columns={"Low Temp (°F)": "Low Temp (F)", "High Temp (°F)": "High Temp (F)"}
         )
@@ -26,11 +27,6 @@ class NYBicyclesData(DataFrameLoader):
         # df['weekday'] = pd.to_datetime(df['Date']).dt.dayofweek
         df['date'] = pd.to_datetime(df['Date'])
         df["weekday"] = df['date'].dt.day_name()
-
-        if train:
-            df["target"] = np.log(1 + df["bicycles count"])
-        else:
-            df["target"] = df["bicycles count"]
 
         return df
 
@@ -91,22 +87,23 @@ class NYBicyclesData(DataFrameLoader):
             "Precipitation",
             "High Temp (F)",
             "Low Temp (F)",
+            "bicycles count"
         ]
 
         df_train = self.data_preparation(df_train)
-        df_val = self.data_preparation(df_test,train=False)
+        df_val = self.data_preparation(df_test)
 
-        num_max = df_train[numerical_features].abs().max()
-        df_train[numerical_features] = df_train[numerical_features] / num_max
-        df_val[numerical_features] = df_val[numerical_features] / num_max
+        self.setup_scaler(numerical_features)
+        df_train = self.scale_columns(df_train, mode='train')
+        df_val = self.scale_columns(df_val)
 
         self.df_train = df_train
         self.df_val = df_val
         self.numerical_features = numerical_features
         self.categorical_features = categorical_features
-        self.n_features = len(numerical_features + categorical_features)
-        self.target_column = "target"
+        self.n_features = len(numerical_features + categorical_features) - 1
 
+        self.set_target_column(main_target='bicycles count',additional_ones=True)
 
 
 if __name__ == '__main__':
