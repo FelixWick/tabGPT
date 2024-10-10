@@ -118,15 +118,15 @@ def evaluation(y, yhat):
     print('mean(y): ', np.mean(y))
 
 
-def predict(model, dataloader, df):
+def predict(model, dataloader, df, target_scaler):
     model.eval()
 
     yhat = []
-    for input_ids, _ in dataloader:
+    for input_ids,_  in dataloader:
         with torch.no_grad():
-            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
+            with torch.autocast(device_type='cuda'):
+                preds = model.generate(input_ids.to(device))
+            yhat += preds.cpu().numpy().tolist()
 
-    df["yhat"] = yhat
-    df["yhat"] = np.clip(df["yhat"], 0, None)
-    df["yhat"] = np.exp(df["yhat"]) - 1
+    df["yhat"] = target_scaler.inverse_transform(np.array(yhat).reshape(-1, 1))
     return df

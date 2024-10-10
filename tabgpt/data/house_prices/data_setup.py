@@ -18,7 +18,7 @@ class HousePricesData(DataFrameLoader):
         if all_features:
             categorical_features = []
             numerical_features = []
-            for col in df_train_full.drop(columns=["Id", "SalePrice"]).columns:
+            for col in df_train_full.drop(columns=["Id"]).columns:
                 if df_train_full[col].dtype == 'O':
                     categorical_features.append(col)
                 else:
@@ -38,7 +38,8 @@ class HousePricesData(DataFrameLoader):
                 self.old_to_new_col_mapping["GrLivArea"],
                 self.old_to_new_col_mapping["GarageArea"],
                 self.old_to_new_col_mapping["TotalBsmtSF"],
-                self.old_to_new_col_mapping["YearBuilt"],         
+                self.old_to_new_col_mapping["YearBuilt"],  
+                'SalePrice'       
             ]
 
         return df_train_full, numerical_features, categorical_features
@@ -49,42 +50,34 @@ class HousePricesData(DataFrameLoader):
         df_train_full, numerical_features, categorical_features = self.read(all_features)
        
         df_train, df_val = train_test_split(df_train_full, test_size=0.2, random_state=666)
-        num_max = df_train[numerical_features].abs().max()
-        df_train[numerical_features] = df_train[numerical_features] / num_max
-        df_val[numerical_features] = df_val[numerical_features] / num_max
-        df_train["target"] = np.log(1 + df_train["SalePrice"])
-        df_val["target"] = df_val["SalePrice"]
+       
+        self.setup_scaler(numerical_features)
+        df_train = self.scale_columns(df_train, mode='train')
+        df_val = self.scale_columns(df_val)
 
         self.df_train = df_train
         self.df_val = df_val
         self.numerical_features = numerical_features
         self.categorical_features = categorical_features
-        self.n_features = len(numerical_features + categorical_features)
-        self.target_column = "target"
+        self.n_features = len(numerical_features + categorical_features) -1
 
-    def test_setup(self, all_train_data = False, all_features=True):
+        self.set_target_column(main_target='SalePrice',additional_ones=False)
 
-        if all_train_data:
-            df_train, numerical_features, categorical_features = self.read(all_features)
-            num_max = df_train[numerical_features].abs().max()
-            df_train[numerical_features] = df_train[numerical_features] / num_max
-            df_train["target"] = np.log(1 + df_train["SalePrice"])
-            self.df_train = df_train
-        else:
-            assert self.df_train is not None, 'No training set available, did you call setup() already?'
-            numerical_features = self.numerical_features
-            num_max = self.df_train[numerical_features].abs().max()
-            categorical_features = self.categorical_features
+        
+
+
+    def test_setup(self):
+        assert self.df_train is not None, 'No training set available, did you call setup() already?'
+        numerical_features = self.numerical_features
+        categorical_features = self.categorical_features
 
         features = numerical_features + categorical_features
         
         df_test = pd.read_csv(os.path.join(self.current_dir,"test.csv"))
         df_test = self.give_reasonable_names(df_test) 
-        df_test = df_test[features + ['Id']]                  
-        
-        df_test['target'] = df_test['Id']
-        df_test[numerical_features] = df_test[numerical_features] / num_max
-        df_test['target'] = df_test['Id']
+        df_test = self.append_empty_target(df_test)
+        df_test = df_test[features + ['Id']]   
+        df_test = self.scale_columns(df_test)               
         self.df_test = df_test
 
     def give_reasonable_names(self, df):

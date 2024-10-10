@@ -55,10 +55,10 @@ def main(pretrained):
     store_sales.setup()
 
     house_prices = HousePricesData()
-    house_prices.setup()
+    house_prices.setup(all_features=False)
 
     simulated_demand = SimulatedDemandData()
-    simulated_demand.setup(low=True)
+    simulated_demand.setup()
 
     ny_bicycles = NYBicyclesData()
     ny_bicycles.setup()

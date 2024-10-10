@@ -29,7 +29,10 @@ class StoreSalesData(DataFrameLoader):
 
         df_train_full = self.get_events(df_train_full)
 
-        # take just a small data set for testing
+        # use for single training
+        #df_train_full = df_train_full[df_train_full["date"] >= "2017-05-01"].reset_index(drop=True)
+
+        # use for multi-task training
         df_train_full = df_train_full[df_train_full["date"] >= "2016-11-01"].reset_index(drop=True)
         df_train_full = df_train_full[(df_train_full["store_nbr"].isin([1, 2, 3])) & (df_train_full["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index(drop=True)
 
@@ -45,43 +48,45 @@ class StoreSalesData(DataFrameLoader):
             "oil price",
             "day in month",
             "day in year",
-            "days around Primer Grito de Independencia",
             "past sales",
+            "sales"
         ]
         
         df_train = df_train_full[df_train_full["date"] <= "2017-07-30"].reset_index(drop=True)
         df_val = df_train_full[df_train_full["date"] >= "2017-07-31"].reset_index(drop=True)
 
-        df_train["target"] = np.log(1 + df_train["sales"])
-        df_val["target"] = df_val["sales"]
-
         ewma_groups = ["store", "product group", "weekday"]
-        df_train = self.ewma_prediction(df_train, ewma_groups, "target", 0.15, 1)
+        df_train = self.ewma_prediction(df_train, ewma_groups, "sales", 0.15, 1)
         df_val = self.ewma_merge(df_val, df_train, "past sales", ewma_groups)
 
-        num_max = df_train[numerical_features].abs().max()
-        df_train[numerical_features] = df_train[numerical_features] / num_max
-        df_val[numerical_features] = df_val[numerical_features] / num_max
+        self.setup_scaler(numerical_features)
+        df_train = self.scale_columns(df_train, mode='train')
+        df_val = self.scale_columns(df_val)
 
         self.df_train = df_train
         self.df_val = df_val
         self.numerical_features = numerical_features
         self.categorical_features = categorical_features
-        self.n_features = len(numerical_features + categorical_features)
-        self.target_column = "target"
+        self.n_features = len(numerical_features + categorical_features) - 1
+
+        self.set_target_column(main_target='sales', additional_ones=False)
+        
 
     def test_setup(self):
+        df_test = pd.read_csv(os.path.join(self.current_dir,"test.csv"))
         df_oil = pd.read_csv(os.path.join(self.current_dir,"oil.csv"))
 
-        df_test = pd.read_csv(os.path.join(self.current_dir,"test.csv"))
         df_test = df_test.merge(df_oil, on="date", how="left")
         df_test = self.seasonality_features(df_test)
         df_test = self.get_events(df_test)
         df_test.rename(columns=self.colname_dict, inplace=True)
+        self.remove_feature('past sales', type='numerical')
+        df_test = self.append_empty_target(df_test)
+        df_test = df_test[self.numerical_features + self.categorical_features + ['id']]
+
+        df_test = self.scale_columns(df_test)
+        
         self.df_test = df_test
-        self.numerical_features.remove('past sales')
-        self.n_features -= 1
-        self.target_column = 'store'
     
     def ewma_prediction(self, df, group_cols, col, alpha, horizon):
         df.sort_values(["date"], inplace=True)

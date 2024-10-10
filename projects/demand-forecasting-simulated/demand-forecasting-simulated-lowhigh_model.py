@@ -51,7 +51,7 @@ def main(args):
 
     n_cols = max(simulated_demand_low.n_features, simulated_demand_high.n_features)
 
-    target_column = simulated_demand_low.target_column
+    target_column = simulated_demand_low.main_target
 
     datasets = [simulated_demand_low, simulated_demand_high]
     features_embeds_train_list = [Embedder(d, mode='train').embed(n_cols=n_cols) for d in datasets]
