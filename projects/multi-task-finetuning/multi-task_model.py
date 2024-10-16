@@ -13,10 +13,15 @@ from peft import LoraConfig, TaskType, get_peft_model
 
 
 from tabgpt.callbacks import whole_epoch_train_loss
+from tabgpt.data.babies_r_us.data_setup import BabiesData
+from tabgpt.data.buybuy_baby.data_setup import BuyBuyBabyData
+from tabgpt.data.favorita.data_setup import FavoritaData
 from tabgpt.data.house_prices.data_setup import HousePricesData
 from tabgpt.data.ny_bicycles.data_setup import NYBicyclesData
+from tabgpt.data.rossmann.data_setup import RossmannData
 from tabgpt.data.simulated_demand.data_setup import SimulatedDemandData
 from tabgpt.data.store_sales.data_setup import StoreSalesData
+from tabgpt.data.walmart.data_setup import WalmartData
 from tabgpt.model_hf import tabGPT_HF, tabGPTConfig
 from tabgpt.tabular_dataset import TabularDataset, load_datasets
 from tabgpt.utils import evaluation, predict
@@ -35,8 +40,11 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 
 if torch.cuda.is_available():
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:0") # RTX 4090
     print("Using GPU.")
+    print(f"Number of GPUs: {torch.cuda.device_count()}")
+    for i in range(torch.cuda.device_count()):
+        print(f"Device {i}: {torch.cuda.get_device_name(i)}")
 else:
     print("No GPU available, using the CPU instead.")
     device = torch.device("cpu")
@@ -95,10 +103,14 @@ def construct_files(data_list):
     for d in data_list:
         if d.name == 'house_prices':
             d.setup(all_features=False)
-        else:
+        elif d.name == 'simulated_demand':
             d.setup()
-        if d.name == 'simulated_demand':
             d.df_val = d.df_test
+        elif d.name == 'store_sales':
+            d.setup()
+        else:
+            d.setup(last_nrows=200_000)
+            
     
     max_features = max([d.n_features for d in data_list])
 
@@ -111,9 +123,18 @@ def main(finetune_on):
     np.random.seed(666)
     torch.manual_seed(42)
 
-    data_loader = [StoreSalesData(), HousePricesData(), NYBicyclesData(), SimulatedDemandData()]
+    data_loader = [StoreSalesData(), 
+                   HousePricesData(), 
+                   NYBicyclesData(), 
+                   SimulatedDemandData(), 
+                   FavoritaData(), 
+                   RossmannData(), 
+                   WalmartData(), 
+                   BabiesData(),
+                   BuyBuyBabyData(),
+                   ]
     
-    files_generated = True
+    files_generated = False
 
     if not files_generated:
         construct_files(data_list=data_loader)
@@ -122,18 +143,20 @@ def main(finetune_on):
         for d in data_loader:
             if d.name == 'house_prices':
                 d.setup(all_features=False)
-            else:
+            elif d.name == 'simulated_demand':
                 d.setup()
-            if d.name == 'simulated_demand':
                 d.df_val = d.df_test
+            else: 
+                d.setup()
 
-
-    msg = [f'train samples {d.name}: {len(d.df_train)}' for d in data_loader]
-    for msg in msg:
-        print(msg)
+    for d in data_loader:
+        print(d)
+        print('\n')
 
     max_features = max([data.n_features for data in data_loader])
     print('Max features:', max_features)
+
+    embed()
 
     max_pretrain_lr = 5e-4
     max_finetune_lr = 1e-4
@@ -142,7 +165,7 @@ def main(finetune_on):
     config = tabGPTConfig(n_layer=n_layer, n_head=n_head, block_size=max_features+1, n_output_nodes=1)
     model = tabGPT_HF(config)
 
-    # Parse the topics
+    # Parse the topicsnvisi
     data_loader_to_pretrain = [d for d in data_loader if d.name != args.finetune_on]
 
     # Load the specified datasets
@@ -163,7 +186,7 @@ def main(finetune_on):
         train_config.num_workers = 10
         train_config.batch_size = 64
         train_config.learning_rate = max_pretrain_lr
-        trainer = Trainer(train_config, model, combined_dataset)
+        trainer = Trainer(train_config, model, combined_dataset, progress_bar=False)
 
         trainer.run()
 
@@ -187,14 +210,14 @@ def main(finetune_on):
         finetune_config.num_workers = 10
         finetune_config.batch_size = 64
         finetune_config.learning_rate = max_finetune_lr
-        trainer = Trainer(finetune_config, lora_model, torch_finetune_dataset, use_scheduler=True)
+        trainer = Trainer(finetune_config, model, torch_finetune_dataset, use_scheduler=True)
         trainer.set_callback('on_epoch_end', whole_epoch_train_loss)
         trainer.run()
 
 
         val_datasets = {d.name: load_datasets(dataset_loader=[d], mode='val', target=d.main_target) for d in data_loader}
         
-        d_dict = {d.name: d for d in data_loader}
+        d_dict = {d.name: d for d in data_loader_to_finetune}
 
         if args.finetune_on == "store_sales":
 
@@ -204,7 +227,7 @@ def main(finetune_on):
             df_val[target_col] = target_scaler.inverse_transform(df_val[[target_col]])
 
             df_val_store_sales = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets['store_sales'], batch_size=32),
                 df_val,
                 target_scaler
@@ -225,7 +248,7 @@ def main(finetune_on):
             df_val[target_col] = target_scaler.inverse_transform(df_val[[target_col]])
 
             df_val_house_prices = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets['house_prices'], batch_size=32),
                 df_val,
                 target_scaler
@@ -240,7 +263,7 @@ def main(finetune_on):
             df_val[target_col] = target_scaler.inverse_transform(df_val[[target_col]])
             
             df_val_simulated_demand = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets['simulated_demand'], batch_size=32),
                 df_val,
                 target_scaler
@@ -256,7 +279,7 @@ def main(finetune_on):
             df_val[target_col] = target_scaler.inverse_transform(df_val[[target_col]])
 
             df_val_bicycles_count = predict(
-                lora_model,
+                model,
                 DataLoader(val_datasets["ny_bicycles"], batch_size=32),
                 df_val,
                 target_scaler

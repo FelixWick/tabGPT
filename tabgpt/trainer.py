@@ -16,6 +16,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import OneCycleLR
 import os
 import re
+import logging
+
 
 
 import warnings
@@ -65,7 +67,7 @@ class Trainer:
 
         # determine the device we'll train on
         if config.device == 'auto':
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         else:
             self.device = config.device
         self.model = self.model.to(self.device)
@@ -134,6 +136,8 @@ class Trainer:
             for batch_idx, batch in progress_bar:
                 batch = [t.to(self.device) for t in batch]
                 x, y = batch
+                # backprop and update the parameters
+                model.zero_grad(set_to_none=True)
 
                 model.zero_grad(set_to_none=True)
 
