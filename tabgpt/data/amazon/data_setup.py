@@ -15,7 +15,6 @@ class AmazonData(DataFrameLoader):
         super().__init__(task_description)
 
     def setup(self, testset = False):
-        current_dir = os.path.dirname(os.path.abspath(__file__))        
 
         # Load data
         # Data source: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/YGLYDY
@@ -71,11 +70,7 @@ class AmazonData(DataFrameLoader):
 
         # Split data
         df_train = df_final.query('@date_start <= date < @date_split').reset_index(drop=True)
-        df_test = df_final.query('@date_split <= date <= @date_end').reset_index(drop=True)
-
-        # Normalize data
-        df_train["target"] = np.log(1 + df_train["quantity"])
-        df_test["target"] = df_test["quantity"]
+        df_val = df_final.query('@date_split <= date <= @date_end').reset_index(drop=True)
         
         # Setting of categorical and numerical features
         categorical_features = [
@@ -88,24 +83,25 @@ class AmazonData(DataFrameLoader):
         ]
         numerical_features = [
             "average daily price",
-            "past target value"
+            "quantity",
+            "past quantity"
         ]
 
-        # More normalization
-        num_max = df_train[numerical_features].abs().max()
-        df_train[numerical_features] = df_train[numerical_features] / num_max
-        df_test[numerical_features] = df_test[numerical_features] / num_max
+        # Scaling
+        self.setup_scaler(numerical_features)
+        self.scale_columns(df_train, mode='train')
+        self.scale_columns(df_val)
 
         # Drop columns
         df_train = df_train.drop(columns=['product_id'])
-        df_test = df_test.drop(columns=['product_id'])
+        df_val = df_val.drop(columns=['product_id'])
 
         self.df_train = df_train
-        self.df_test = df_test
+        self.df_val = df_val
         self.numerical_features = numerical_features
         self.categorical_features = categorical_features
         self.n_features = len(numerical_features + categorical_features)
-        self.target_column = "target"
+        self.set_target_column(main_target='quantity', additional_ones=False)
 
 
     # Function that aggregrates to daily, do not fill in those with 0 sales by 0
@@ -131,7 +127,6 @@ class AmazonData(DataFrameLoader):
     def remove_zero_sales(self, df, date_start, date_end):
         # Filter the data between date_start and date_end
         df_sales_period = df[(df['date'] >= date_start.date()) & (df['date'] < date_end.date())].reset_index(drop=True)
-        # df_sales_period = df.query('@date_start <= date < @date_end').reset_index(drop=True)
 
         # Obtain total sales per product
         total_sales_per_product = df_sales_period.groupby('product_id')['quantity'].sum()
@@ -159,12 +154,6 @@ class AmazonData(DataFrameLoader):
             .apply(lambda x: mx_holiday[x] if (x in mx_holiday) else "not holiday")
         )
 
-        # # Add holiday feature
-        # df_data["holiday"] = (
-        #     df_data["date"]
-        #     .apply(lambda x: "yes" if (x in mx_holiday) else "no")
-        # )
-
         df_date["month"] = df_date["date"].dt.month_name(locale="en_US.UTF-8")
         df_date["year"] = df_date["date"].dt.year
         df_date["day_of_week"] = df_date["date"].dt.day_name()
@@ -180,7 +169,7 @@ class AmazonData(DataFrameLoader):
     def ewma_calculation(self, df, group_cols, col, alpha, horizon):
         df.sort_values(["date"], inplace=True)
         df_grouped = df.groupby(group_cols, group_keys=False)
-        df["past target value"] = df_grouped[col].apply(lambda x: x.shift(horizon).ewm(alpha=alpha, ignore_na=True).mean())
+        df["past quantity"] = df_grouped[col].apply(lambda x: x.shift(horizon).ewm(alpha=alpha, ignore_na=True).mean())
         return df
 
 
