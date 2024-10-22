@@ -69,7 +69,7 @@ def main(test, pretrained):
 
     train_dataset = TensorDataset(
         features_embeds_train,
-        torch.tensor(df_train[amazon.target_column].tolist(), dtype=torch.float32)
+        torch.tensor(df_train[amazon.main_target].tolist(), dtype=torch.float32)
     )
 
     max_length = n_cols +1
@@ -94,27 +94,27 @@ def main(test, pretrained):
     # inference
     print(f"Train")
     df_train = predict(model, DataLoader(train_dataset, batch_size=32), df_train)
-    evaluation(df_train[amazon.target_column], df_train["yhat"])
+    evaluation(df_train[amazon.main_target], df_train["yhat"])
     plot_timeseries(df_train, "train", True)
 
     print(f"Valid")
     val_dataset = TensorDataset(
         features_embeds_val,
-        torch.tensor(df_val[amazon.target_column].tolist(), dtype=torch.float32)
+        torch.tensor(df_val[amazon.main_target].tolist(), dtype=torch.float32)
     )
 
     df_val = predict(model, DataLoader(val_dataset, batch_size=32), df_val)
-    evaluation(df_val[amazon.target_column], df_val["yhat"])
+    evaluation(df_val[amazon.main_target], df_val["yhat"])
     plot_timeseries(df_val, "val", True)
 
     # print(f"Test")
     # test_dataset = TensorDataset(
     #     features_embeds_test,
-    #     torch.tensor(df_test[amazon.target_column].tolist(), dtype=torch.float32)
+    #     torch.tensor(df_test[amazon.main_target].tolist(), dtype=torch.float32)
     # )
 
     # df_test = predict(model, DataLoader(test_dataset, batch_size=32), df_test)
-    # evaluation(df_test[amazon.target_column], df_test["yhat"])
+    # evaluation(df_test[amazon.main_target], df_test["yhat"])
     # plot_timeseries(df_test, "test", True)
 
     embed()

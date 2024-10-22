@@ -158,7 +158,6 @@ class AmazonData(DataFrameLoader):
         df_date["year"] = df_date["date"].dt.year
         df_date["day_of_week"] = df_date["date"].dt.day_name()
 
-        df_data['date'] = pd.to_datetime(df_data['date'])
         df_date['date'] = pd.to_datetime(df_date['date'])
         df_output = df_data.merge(df_date, how='left', on='date')
 
