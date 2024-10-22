@@ -8,7 +8,7 @@ from ast import literal_eval
 import numpy as np
 import torch
 from sklearn.metrics import root_mean_squared_log_error
-
+from IPython import embed
 
 # -----------------------------------------------------------------------------
 
@@ -120,11 +120,18 @@ def evaluation(y, yhat):
 
 def predict(model, dataloader, df):
     model.eval()
+    model = model.to(device)
 
     yhat = []
     for input_ids, _ in dataloader:
         with torch.no_grad():
-            yhat += model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
+            yhat_append = model.generate(input_ids.to(device)).cpu().detach().numpy().tolist()
+
+            # Append if it is only a float
+            if isinstance(yhat_append, float):
+                yhat.append(yhat_append)
+            else:
+                yhat.extend(yhat_append)
 
     df["yhat"] = yhat
     df["yhat"] = np.clip(df["yhat"], 0, None)
