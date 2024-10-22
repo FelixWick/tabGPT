@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from sklearn.metrics import root_mean_squared_log_error
 from IPython import embed
+from IPython import embed
 
 # -----------------------------------------------------------------------------
 
@@ -120,6 +121,7 @@ def evaluation(y, yhat):
 
 def predict(model, dataloader, df, target_scaler):
     model.eval()
+    model = model.to(device)
     model = model.to(device)
 
     yhat = []
