@@ -58,15 +58,15 @@ def main(test, pretrained):
     embedder.train()
     features_embeds_train = embedder.embed(n_cols)
 
-    # embedder.val()
-    # features_embeds_val = embedder.embed(n_cols)
+    embedder.val()
+    features_embeds_val = embedder.embed(n_cols)
 
-    embedder.test()
-    features_embeds_test = embedder.embed(n_cols)
+    # embedder.test()
+    # features_embeds_test = embedder.embed(n_cols)
 
     df_train = mexico.df_train
-    # df_val = mexico.df_val
-    df_test = mexico.df_test
+    df_val = mexico.df_val
+    # df_test = mexico.df_test
 
 
     train_dataset = TensorDataset(
@@ -99,25 +99,25 @@ def main(test, pretrained):
     evaluation(df_train[mexico.target_column], df_train["yhat"])
     plot_timeseries(df_train, "train", True)
 
-    # print(f"Valid")
-    # val_dataset = TensorDataset(
-    #     features_embeds_val,
-    #     torch.tensor(df_val[mexico.target_column].tolist(), dtype=torch.float32)
-    # )
-
-    # df_val = predict(model, DataLoader(val_dataset, batch_size=32), df_val)
-    # evaluation(df_val[mexico.target_column], df_val["yhat"])
-    # plot_timeseries(df_val, "val", True)
-
-    print(f"Test")
-    test_dataset = TensorDataset(
-        features_embeds_test,
-        torch.tensor(df_test[mexico.target_column].tolist(), dtype=torch.float32)
+    print(f"Valid")
+    val_dataset = TensorDataset(
+        features_embeds_val,
+        torch.tensor(df_val[mexico.target_column].tolist(), dtype=torch.float32)
     )
 
-    df_test = predict(model, DataLoader(test_dataset, batch_size=32), df_test)
-    evaluation(df_test[mexico.target_column], df_test["yhat"])
-    plot_timeseries(df_test, "test", True)
+    df_val = predict(model, DataLoader(val_dataset, batch_size=32), df_val)
+    evaluation(df_val[mexico.target_column], df_val["yhat"])
+    plot_timeseries(df_val, "val", True)
+
+    # print(f"Test")
+    # test_dataset = TensorDataset(
+    #     features_embeds_test,
+    #     torch.tensor(df_test[mexico.target_column].tolist(), dtype=torch.float32)
+    # )
+
+    # df_test = predict(model, DataLoader(test_dataset, batch_size=32), df_test)
+    # evaluation(df_test[mexico.target_column], df_test["yhat"])
+    # plot_timeseries(df_test, "test", True)
 
     embed()
 
