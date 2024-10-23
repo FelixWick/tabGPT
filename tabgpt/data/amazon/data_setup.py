@@ -18,7 +18,7 @@ class AmazonData(DataFrameLoader):
 
         # Load data
         # Data source: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/YGLYDY
-        DATA_PATH = '/mnt/DataSSD4TB/tfm/dataset/Amazon'
+        DATA_PATH = '/'
         df_all = pd.read_csv(os.path.join(DATA_PATH, 'amazon-purchases.csv'))
 
         colname_dict = {
