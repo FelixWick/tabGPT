@@ -85,7 +85,7 @@ class MexicoData(DataFrameLoader):
         df_final = self.get_date_feature(df_final, country="MX")
 
         # Obtain EWMA features
-        ewma_groups = ["product description", "product name", "day_of_week"]  # Not sure
+        ewma_groups = ["product name", "day_of_week"]
         df_final = self.ewma_calculation(df_final, ewma_groups, "quantity", 0.15, 1)
 
         # Drop due to date: to the actual time range
