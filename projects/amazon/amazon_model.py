@@ -93,7 +93,10 @@ def main(test, pretrained):
 
     # inference
     print(f"Train")
-    df_train = predict(model, DataLoader(train_dataset, batch_size=32), df_train)
+    target_scaler = amazon.scaler[amazon.main_target]
+    df_train[amazon.main_target] = target_scaler.inverse_transform(df_train[[amazon.main_target]])
+
+    df_train = predict(model, DataLoader(train_dataset, batch_size=32), df_train, target_scaler=target_scaler)
     evaluation(df_train[amazon.main_target], df_train["yhat"])
     plot_timeseries(df_train, "train", True)
 
@@ -103,7 +106,9 @@ def main(test, pretrained):
         torch.tensor(df_val[amazon.main_target].tolist(), dtype=torch.float32)
     )
 
-    df_val = predict(model, DataLoader(val_dataset, batch_size=32), df_val)
+    df_val[amazon.main_target] = target_scaler.inverse_transform(df_val[[amazon.main_target]])
+
+    df_val = predict(model, DataLoader(val_dataset, batch_size=32), df_val, target_scaler=target_scaler)
     evaluation(df_val[amazon.main_target], df_val["yhat"])
     plot_timeseries(df_val, "val", True)
 
