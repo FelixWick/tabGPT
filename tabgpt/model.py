@@ -248,17 +248,18 @@ class tabGPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
-        preds = self.lm_head(x)[:, -1].squeeze()
+        preds = self.lm_head(x)
+        pooled_preds = torch.mean(preds, dim=1).squeeze()
 
         # if we are given some desired targets also calculate the loss
         loss = None
         if targets is not None:
             if self.lm_head.out_features == 1:
-                loss = F.mse_loss(preds, targets)
+                loss = F.mse_loss(pooled_preds, targets)
             else:
-                loss = F.cross_entropy(preds, targets)
+                loss = F.cross_entropy(pooled_preds, targets)
 
-        return preds, loss
+        return pooled_preds, loss
 
     @torch.no_grad()
     def generate(self, x):
