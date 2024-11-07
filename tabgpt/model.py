@@ -120,10 +120,10 @@ class tabGPT(nn.Module):
         if type_given:
             # translate from model_type to detailed configuration
             config.merge_from_dict({
-                'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
-                'gpt-mini':     dict(n_layer=6, n_head=6, n_embd=768),
-                'gpt-micro':    dict(n_layer=4, n_head=4, n_embd=768),
-                'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=768),
+                'gpt2':         dict(n_layer=12, n_head=12, n_embd=384),  # 124M params
+                'gpt-mini':     dict(n_layer=6, n_head=6, n_embd=384),
+                'gpt-micro':    dict(n_layer=4, n_head=4, n_embd=384),
+                'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=384),
             }[config.model_type])
 
         self.transformer = nn.ModuleDict(dict(
@@ -247,17 +247,22 @@ class tabGPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
-        preds = self.lm_head(x)[:, -1].squeeze()
+        preds = self.lm_head(x)
+
+        # do not pool over task/target description, but add it to pooled dimension
+        pooled_preds = torch.mean(preds[:, 1:, :], dim=1)
+        pooled_preds += preds[:, 0, :]
+        pooled_preds = pooled_preds.squeeze()
 
         # if we are given some desired targets also calculate the loss
         loss = None
         if targets is not None:
             if self.lm_head.out_features == 1:
-                loss = F.mse_loss(preds, targets)
+                loss = F.mse_loss(pooled_preds, targets)
             else:
-                loss = F.cross_entropy(preds, targets)
+                loss = F.cross_entropy(pooled_preds, targets)
 
-        return preds, loss
+        return pooled_preds, loss
 
     @torch.no_grad()
     def generate(self, x):
