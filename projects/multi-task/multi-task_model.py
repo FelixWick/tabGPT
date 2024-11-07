@@ -1,5 +1,3 @@
-import argparse
-
 import pandas as pd
 import numpy as np
 from sklearn.metrics import root_mean_squared_log_error
@@ -336,7 +334,7 @@ def get_data_simulated_demand():
     return df_train, df_test, features, categorical_features, numerical_features
 
 
-def main(pretrained):
+def main():
     np.random.seed(666)
     torch.manual_seed(42)
 
@@ -367,15 +365,12 @@ def main(pretrained):
         )
 
     # tabGPT model
-    if pretrained:
-        model = tabGPT.from_pretrained('gpt2', 1)
-    else:
-        model_config = tabGPT.get_default_config()
-        model_config.model_type = 'gpt-micro'
-        model_config.vocab_size = 50257 # openai's model vocabulary
-        model_config.block_size = max_features + 1 # 1024 is openai's model block_size
-        model_config.n_output_nodes = 1
-        model = tabGPT(model_config)
+    model_config = tabGPT.get_default_config()
+    model_config.model_type = 'gpt-micro'
+    model_config.vocab_size = 50257 # openai's model vocabulary
+    model_config.block_size = max_features + 1 # 1024 is openai's model block_size
+    model_config.n_output_nodes = 1
+    model = tabGPT(model_config)
 
     # create a Trainer object
     train_config = Trainer.get_default_config()
@@ -443,7 +438,4 @@ def main(pretrained):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--pretrained", action="store_true")
-    args = parser.parse_args()
-    main(args.pretrained)
+    main()

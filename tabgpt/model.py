@@ -120,7 +120,7 @@ class tabGPT(nn.Module):
         if type_given:
             # translate from model_type to detailed configuration
             config.merge_from_dict({
-                'gpt2':         dict(n_layer=12, n_head=12, n_embd=384),  # 124M params
+                'gpt2':         dict(n_layer=12, n_head=12, n_embd=384),
                 'gpt-mini':     dict(n_layer=6, n_head=6, n_embd=384),
                 'gpt-micro':    dict(n_layer=4, n_head=4, n_embd=384),
                 'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=384),
@@ -152,51 +152,6 @@ class tabGPT(nn.Module):
         elif isinstance(module, nn.LayerNorm):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
-
-    @classmethod
-    def from_pretrained(cls, model_type, n_output_nodes):
-        """
-        Initialize a pretrained GPT model by copying over the weights
-        from a huggingface/transformers checkpoint.
-        """
-        assert model_type in {'gpt2'}
-        from transformers import GPT2LMHeadModel
-
-        # create a from-scratch initialized minGPT model
-        config = cls.get_default_config()
-        config.model_type = model_type
-        config.n_output_nodes = n_output_nodes
-        config.vocab_size = 50257 # openai's model vocabulary
-        config.block_size = 1024  # openai's model block_size
-        model = tabGPT(config)
-        sd = model.state_dict()
-
-        # init a huggingface/transformers model
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
-        sd_hf = model_hf.state_dict()
-
-        # copy while ensuring all of the parameters are aligned and match in names and shapes
-        keys = [k for k in sd_hf if not k.endswith('attn.masked_bias')] # ignore these
-        keys = [k for k in keys if k not in ['transformer.wte.weight', 'transformer.wpe.weight']] # we don't have tokens and positional encoding
-        sd_keys = [k for k in sd if not k.endswith('.attn.bias')] # ignore these, because not in huggingface model
-        transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
-        # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla nn.Linear.
-        # this means that we have to transpose these weights when we import them
-        assert len(keys) == len(sd_keys)
-        keys = [k for k in keys if k != 'lm_head.weight'] # head is different for us here
-        for k in keys:
-            if any(k.endswith(w) for w in transposed):
-                # special treatment for the Conv1D weights we need to transpose
-                assert sd_hf[k].shape[::-1] == sd[k].shape
-                with torch.no_grad():
-                    sd[k].copy_(sd_hf[k].t())
-            else:
-                # vanilla copy over the other parameters
-                assert sd_hf[k].shape == sd[k].shape
-                with torch.no_grad():
-                    sd[k].copy_(sd_hf[k])
-
-        return model
 
     def configure_optimizers(self, train_config):
         """

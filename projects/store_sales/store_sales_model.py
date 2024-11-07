@@ -95,7 +95,7 @@ def predict(model, dataloader, df):
     return df
 
 
-def main(test, pretrained):
+def main(test):
     np.random.seed(666)
     torch.manual_seed(42)
 
@@ -115,10 +115,10 @@ def main(test, pretrained):
 
     # take just a small data set for testing
     # used single training of concept paper:
-    df_train_full = df_train_full[df_train_full["date"] >= "2017-05-01"].reset_index(drop=True)
+    # df_train_full = df_train_full[df_train_full["date"] >= "2017-05-01"].reset_index(drop=True)
     # used in individual comparison for cross-training of concept paper:
-    # df_train_full = df_train_full[df_train_full["date"] >= "2016-11-01"].reset_index(drop=True)
-    # df_train_full = df_train_full[(df_train_full["store_nbr"].isin([1, 2, 3])) & (df_train_full["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index(drop=True)
+    df_train_full = df_train_full[df_train_full["date"] >= "2016-11-01"].reset_index(drop=True)
+    df_train_full = df_train_full[(df_train_full["store_nbr"].isin([1, 2, 3])) & (df_train_full["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index(drop=True)
 
     colname_dict = {
         "store_nbr": "store",
@@ -149,7 +149,7 @@ def main(test, pretrained):
         df_test = df_test.merge(df_oil, on="date", how="left")
         df_test = seasonality_features(df_test)
         df_test = get_events(df_test)
-        # df_test = df_test[(df_test["store_nbr"].isin([1, 2, 3])) & (df_test["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index()
+        df_test = df_test[(df_test["store_nbr"].isin([1, 2, 3])) & (df_test["family"].isin(["LIQUOR,WINE,BEER", "EGGS", "MEATS"]))].reset_index()
         df_test.rename(columns=colname_dict, inplace=True)
     else:
         df_train = df_train_full[df_train_full["date"] <= "2017-07-30"].reset_index(drop=True)
@@ -173,21 +173,17 @@ def main(test, pretrained):
     max_length = len(features) + 1
 
     # tabGPT model
-    if pretrained:
-        model = tabGPT.from_pretrained('gpt2', 1)
-    else:
-        model_config = tabGPT.get_default_config()
-        model_config.model_type = 'gpt-micro'
-        model_config.vocab_size = 50257 # openai's model vocabulary
-        model_config.block_size = max_length # 1024 is openai's model block_size
-        model_config.n_output_nodes = 1
-        model = tabGPT(model_config)
+    model_config = tabGPT.get_default_config()
+    model_config.model_type = 'gpt-micro'
+    model_config.vocab_size = 50257 # openai's model vocabulary
+    model_config.block_size = max_length # 1024 is openai's model block_size
+    model_config.n_output_nodes = 1
+    model = tabGPT(model_config)
 
     # create a Trainer object
     train_config = Trainer.get_default_config()
     train_config.max_iters = 1000000
-    train_config.epochs = 94 # used in single training of concept paper
-    # train_config.epochs = 89 # used in individual comparison for cross-training of concept paper
+    train_config.epochs = 65
     train_config.num_workers = 0
     train_config.batch_size = 64
     train_config.observe_train_loss = True
@@ -246,6 +242,5 @@ def main(test, pretrained):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test", action="store_true")
-    parser.add_argument("--pretrained", action="store_true")
     args = parser.parse_args()
-    main(args.test, args.pretrained)
+    main(args.test)
