@@ -6,6 +6,8 @@ import numpy as np
 import logging
 import os
 import glob
+import shutil
+import json
 
 logging.basicConfig(level=logging.INFO)
 
@@ -42,8 +44,8 @@ class Embedder():
         if save == False:
             if len(self.df_loader.target_column) > 1:
                 raise ValueError('Specifying multiple target columns for in-memory mode is not allowed. Either use save=True or choose only one main target.')
-        n_features = self.df_loader.n_features + 1
-        n_cols += 1
+        n_features = self.df_loader.n_features + 1 # plus target description
+        n_cols += 1 # plus target description
         assert n_features <= n_cols, "total number of features must not be larger than set n_cols"
 
         df = self.df_loader.df() # train or val depending on mode
@@ -101,48 +103,62 @@ class Embedder():
         
         inputs_embeds = inputs_embeds[:, 1:, :]
 
+        target_embedding_dict = {}
+        targets = {}
         for target_col in self.df_loader.target_column:
             descr = f'{self.df_loader.task_description} - {target_col} prediction'
             logging.info(f"{self.df_loader.name}: Building {self.df_loader.mode} data with description: '{descr}'")
             input_ids = self.tokenizer(descr, return_tensors="pt")
             with torch.no_grad():
                 target_embed = self.model(**input_ids.to(device)).last_hidden_state.mean(dim=1).cpu()
-            target_embed = target_embed.repeat(len(df), 1, 1) # nrows, 1, emb_dim
 
-            features_embeds_wo_pos = torch.cat((target_embed, inputs_embeds), dim=1)
-            rows, features, emb_dim = features_embeds_wo_pos.shape
-            features_embeds = torch.zeros(rows, features, emb_dim)
-            features_embeds[:, 1:, :] = 1.
-            features_embeds += features_embeds_wo_pos
+            target_embedding_dict[target_col] = column_identifier[target_col], target_embed.tolist()            
+            targets[target_col] = column_identifier[target_col], df[target_col].to_list()
 
-            features_embeds = remove_index(features_embeds, column_identifier[target_col])
-            target = df[target_col].to_list()
-            # loss_identifier = 0 if type=='binary' else 1
 
-            if n_features < n_cols:
-                padding_features_embeds = torch.ones(len(df), n_cols - n_features, 768)
-                features_embeds = torch.cat((features_embeds, padding_features_embeds), dim=1)
+        if n_features < n_cols:
+            padding_features_embeds = torch.ones(len(df), n_cols - n_features, 768)
+            inputs_embeds = torch.cat((inputs_embeds, padding_features_embeds), dim=1)
 
-            if save:
-                path = os.path.join(self.df_loader.current_dir,'files',self.df_loader.mode, target_col)
+        if save:
+            path = os.path.join(self.df_loader.current_dir,'files',self.df_loader.mode)
 
-                if not os.path.exists(path):
-                    logging.info("Creating directory")
-                    os.makedirs(path)
+            task_description_path = os.path.join(self.df_loader.current_dir,'task_description',self.df_loader.mode)
+            if not os.path.exists(task_description_path):
+                logging.info("Creating task description directory")
+                os.makedirs(task_description_path)
+            with open(os.path.join(task_description_path,'task_description.json'), 'w') as f: 
+                json.dump(target_embedding_dict, f)
 
-                if remove_first:
-                    if os.listdir(path):
-                        files = glob.glob(os.path.join(path, '*'))
-                        logging.info('Removing old files')
-                        for f in files:
+            if not os.path.exists(path):
+                logging.info("Creating file directory")
+                os.makedirs(path)
+
+            if remove_first:
+                if os.listdir(path):
+                    files = glob.glob(os.path.join(path, '*'))
+                    logging.info('Removing old files')
+                    for f in files:
+                        try:
                             os.remove(f)
-                
-                logging.info(f'Storing {self.df_loader.mode} files with target: {target_col}')
-                for i in range(features_embeds.shape[0]):
-                    file_name = f"{self.df_loader.name};{target[i]};{i}"
-                    np.save(os.path.join(path,file_name), features_embeds[i].to(torch.float16))
-            else:
-                return features_embeds
+                        except:
+                            shutil.rmtree(f)
+            
+            logging.info(f'Storing {self.df_loader.mode} files')
+            for i in range(inputs_embeds.shape[0]):
+                target_dict = [(c,t[i]) for _, (c,t) in targets.items()]
+                file_name = f"{self.df_loader.name};{target_dict};{i}"
+                np.save(os.path.join(path,file_name), inputs_embeds[i].to(torch.float16))
+        else:
+            n, _, _ = inputs_embeds.shape
+            c, target_embed = target_embedding_dict[self.df_loader.main_target]
+            target_embed = target_embed.unsqueeze(0).repeat(n,1,1)
+            feature_embeds = torch.cat((target_embed,inputs_embeds), dim=1)
+            pos_info = torch.zeros_like(feature_embeds)
+            pos_info[:, 1:, :] = 1.
+            feature_embeds = feature_embeds + pos_info
+            feature_embeds = remove_index(feature_embeds, idx=c)
+            return feature_embeds
 
 
 class DirectoryNotEmptyError(Exception):
@@ -152,3 +168,13 @@ class DirectoryNotEmptyError(Exception):
 
 def remove_index(t, idx):
     return torch.cat((t[:, :idx, :], t[:, (idx+1):, :]), dim=1)
+
+
+def add_positional_info(target_embedding, feature_embeddings):
+    """
+    For a single row, add the target embedding and positional info
+    """
+    feature_embeddings_descr = torch.cat((target_embedding, feature_embeddings), dim=0)
+    pos_info = torch.zeros_like(feature_embeddings_descr)
+    pos_info[1:, :] = 1.
+    return feature_embeddings_descr + pos_info

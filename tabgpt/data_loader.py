@@ -6,6 +6,7 @@ import os
 from sklearn.preprocessing import QuantileTransformer
 import logging
 import numpy as np
+import warnings
 
 
 @dataclass
@@ -63,12 +64,27 @@ class DataFrameLoader:
     
     def set_target_column(self, main_target,additional_ones=True):
         self.main_target = main_target
+        self.check_target_in_features()
+        self.get_n_features()
         self.target_column = [main_target]
         if additional_ones:
             additional_ones = [t for t in self.numerical_features if t!=main_target]
             for additional_target in additional_ones:
                 self.target_column.append(additional_target)
-        logging.info(f'{self.name} - Main target: {main_target}; additional targets: {additional_ones}')
+
+    def use_multiple_targets(self):
+        if len(self.target_column) > 1:
+            warnings.warn("You already set multiple targets in your setup method, skipping")
+            return
+        additional_ones = [t for t in self.numerical_features if t!=self.main_target]
+        for additional_target in additional_ones:
+            self.target_column.append(additional_target)
+
+    def check_target_in_features(self):
+        assert self.main_target in self.numerical_features, "You have to include your main-target into the list of numerical features"
+
+    def get_n_features(self):
+        self.n_features = len(self.numerical_features + self.categorical_features) - 1 # one is always the target
 
     def append_empty_target(self, df):
         df[self.main_target] = np.ones(len(df))
@@ -81,4 +97,15 @@ class DataFrameLoader:
         else:
             self.categorical_features.remove(f)
         self.n_features -= 1
+
+    def __repr__(self):
+        return (f"Dataset name: {self.name}\n"
+          f"df_train.shape: {self.df_train.shape}\n"
+          f"df_val.shape: {self.df_val.shape}\n"
+          f"numerical features: {self.numerical_features}\n"
+          f"categorical features: {self.categorical_features}\n"
+          f"number of features: {self.n_features}\n"
+          f"main target: {self.main_target}\n"
+          f"additional targets: {self.target_column[1:]}"
+         )
        

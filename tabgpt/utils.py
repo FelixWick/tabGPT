@@ -4,6 +4,7 @@ import sys
 import json
 import random
 from ast import literal_eval
+import pandas as pd
 
 import numpy as np
 import torch
@@ -136,3 +137,11 @@ def predict(model, dataloader, df, target_scaler):
 
     df["yhat"] = target_scaler.inverse_transform(np.array(yhat).reshape(-1, 1))
     return df
+
+
+def stratify(df, groupby_cols, sample_frac = 0.3, min_entries=100):
+    stratified_sample = df.groupby(groupby_cols, group_keys=False).apply(lambda x: x.sample(frac=sample_frac)).reset_index(drop=True)
+    group_counts = stratified_sample.groupby(groupby_cols).size().reset_index(name='counts')
+    valid_groups = group_counts[group_counts['counts'] >= min_entries]
+    filtered_sample = pd.merge(stratified_sample, valid_groups[groupby_cols], on=groupby_cols, how='inner')
+    return filtered_sample
